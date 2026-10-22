@@ -1,0 +1,18 @@
+{
+  "name": "MundialWar",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "MundialWar": {
+        "$path": "src/server.server.lua"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "MundialWar": {
+          "$path": "src/client.client.lua"
+        }
+      }
+    }
+  }
+}
