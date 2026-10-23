@@ -1,226 +1,260 @@
--- Entire map is GUI-based: no 3D streaming distance dependency.
+-- Mundial War 0.6: pooled row renderer, selection, icons and operation labels.
 local Players=game:GetService("Players")
+local UIS=game:GetService("UserInputService")
 local RS=game:GetService("ReplicatedStorage")
-local player=Players.LocalPlayer
+local GuiService=game:GetService("GuiService")
+local function screenPoint(p) return Vector2.new(p.X,p.Y)-GuiService:GetGuiInset() end
 local remote=RS:WaitForChild("MundialWar")
-local gui=Instance.new("ScreenGui")
-gui.Name="MundialWarUI"
-gui.ResetOnSpawn=false
-gui.DisplayOrder=20
+local player=Players.LocalPlayer
+local gui=Instance.new("ScreenGui") gui.Name="MundialWarUI" gui.ResetOnSpawn=false gui.DisplayOrder=20
 gui.Parent=player:WaitForChild("PlayerGui")
-local function make(class,parent,props)
- local obj=Instance.new(class)
- for k,v in pairs(props) do obj[k]=v end
- obj.Parent=parent
- return obj
+local function make(class,parent,p)
+ local o=Instance.new(class) for k,v in pairs(p) do o[k]=v end o.Parent=parent return o
 end
-local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(10,20,34),BorderSizePixel=0})
-local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.5",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
-local status=make("TextLabel",bg,{Position=UDim2.fromOffset(8,36),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1,Text="Conectando…",TextColor3=Color3.new(1,1,1),TextSize=14,TextWrapped=true,Font=Enum.Font.Gotham})
-local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-200),BackgroundColor3=Color3.fromRGB(23,65,94),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
-local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,400)})
-local zoom,ratio,state=1,.25,nil
-local buttons={}
-local lastOwners={}
-local lastBuildings={}
-local neutralColors={}
-local mode=nil
-local buildButtons={}
+local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(10,22,33),BorderSizePixel=0})
+local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,27),BackgroundTransparency=1,Text="MUNDIAL WAR · 0.6",TextColor3=Color3.fromRGB(235,210,155),TextSize=17,Font=Enum.Font.GothamBold})
+local status=make("TextLabel",bg,{Position=UDim2.fromOffset(6,27),Size=UDim2.new(1,-12,0,35),BackgroundTransparency=1,Text="Carregando mapa…",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true})
+local view=make("ScrollingFrame",bg,{Position=UDim2.fromOffset(6,65),Size=UDim2.new(1,-12,1,-223),BackgroundColor3=Color3.fromRGB(23,65,94),BorderSizePixel=0,ScrollBarThickness=4,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
+local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,450)})
+local selection=make("TextLabel",bg,{Position=UDim2.new(0,8,1,-154),Size=UDim2.new(1,-16,0,30),BackgroundTransparency=1,Text="Toque em terra livre para fundar sua nação.",TextColor3=Color3.fromRGB(235,210,155),TextSize=12,TextWrapped=true})
+local toast=make("TextLabel",bg,{Position=UDim2.fromOffset(12,66),Size=UDim2.new(1,-24,0,28),BackgroundColor3=Color3.fromRGB(12,27,39),TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true,Visible=false,ZIndex=8})
+local state,cells,regions,water,rows,icons,labels=nil,{},{},{},{},{},{}
+local selected=nil
+local ratio,zoom,mode=.25,1,nil
+local round=0
+local needRows={}
+local palette={Color3.fromRGB(110,150,210),Color3.fromRGB(204,118,119),Color3.fromRGB(191,156,99),Color3.fromRGB(165,129,192),Color3.fromRGB(107,180,185),Color3.fromRGB(174,188,107)}
+local function color(id)
+ if id==-1 then return Color3.fromRGB(23,65,94) end
+ if id==0 then return Color3.fromRGB(215,215,215) end
+ if state and id==state.you then return Color3.fromRGB(91,201,141) end
+ return palette[math.abs(id)%#palette+1]
+end
+local function message(text)
+ toast.Text=text toast.Visible=true
+ local token=os.clock() toast:SetAttribute("Token",token)
+ task.delay(4,function() if toast:GetAttribute("Token")==token then toast.Visible=false end end)
+end
 local function resize()
- local aspect=state and state.w/state.h or (16/9)
+ local aspect=state and state.w/state.h or 16/9
  local width=math.max(100,math.min(view.AbsoluteSize.X,view.AbsoluteSize.Y*aspect))*zoom
  map.Size=UDim2.fromOffset(width,width/aspect)
  map.Position=UDim2.fromOffset(math.max(0,(view.AbsoluteSize.X-width)/2),math.max(0,(view.AbsoluteSize.Y-width/aspect)/2))
  view.CanvasSize=UDim2.fromOffset(width,width/aspect)
 end
 view:GetPropertyChangedSignal("AbsoluteSize"):Connect(resize)
-local bar=make("Frame",bg,{Position=UDim2.new(0,8,1,-54),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1})
-make("UIListLayout",bar,{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,5),HorizontalAlignment=Enum.HorizontalAlignment.Center})
-local function control(text,callback)
- local b=make("TextButton",bar,{Size=UDim2.new(.18,0,1,0),Text=text,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(36,58,78),TextSize=14,Font=Enum.Font.GothamBold})
- b.Activated:Connect(function() callback(b) end)
- return b
+local buttons={}
+local function bar(y,entries)
+ local f=make("Frame",bg,{Position=UDim2.new(0,6,1,y),Size=UDim2.new(1,-12,0,36),BackgroundTransparency=1})
+ make("UIListLayout",f,{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,3),HorizontalAlignment=Enum.HorizontalAlignment.Center})
+ for _,e in ipairs(entries) do
+  local b=make("TextButton",f,{Size=UDim2.new(1/#entries,-3,1,0),Text=e[1],TextSize=11,TextWrapped=true,Font=Enum.Font.GothamBold,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(35,56,72),BorderSizePixel=0})
+  b.Activated:Connect(function() e[2](b) end)
+  if e[3] then buttons[e[3]]=b end
+ end
 end
-control("25%",function(b)
- local values={.1,.25,.5,.75,1}
- local nextIndex=table.find(values,ratio)%#values+1
- ratio=values[nextIndex]
- b.Text=tostring(math.floor(ratio*100)).."%"
+local function send(action)
+ if not selected then message("Selecione uma célula no mapa primeiro.") return end
+ remote:FireServer(action,selected,ratio)
+end
+bar(-120,{{"Avançar",function() mode=nil send("attack") end},{"25%",function(b) local values={.1,.25,.5,.75,1} ratio=values[table.find(values,ratio)%5+1] b.Text=math.floor(ratio*100).."%" end},{"Parar",function() remote:FireServer("stop") end},{"−",function() zoom=math.max(1,zoom/1.4) resize() end},{"+",function() zoom=math.min(10,zoom*1.4) resize() end},{"Mapa",function() zoom=1 resize() view.CanvasPosition=Vector2.zero end},{"Reiniciar",function() remote:FireServer("restart") end}})
+local entries={}
+for _,e in ipairs({{"city","▥ Cidade 500"},{"factory","⚙ Fábrica 700"},{"bunker","◆ Bunker 400"},{"port","⚓ Porto 900"},{"naval","⛵ Invadir"}}) do
+ local kind=e[1]
+ entries[#entries+1]={e[2],function()
+  if not state then return end
+  if mode==kind then mode=nil else mode=kind end
+  for k,b in pairs(buttons) do b.BackgroundColor3=mode==k and Color3.fromRGB(117,92,41) or Color3.fromRGB(35,56,72) end
+  message(mode and (kind=="naval" and "Toque numa costa para enviar a frota." or state.types[kind].description.." · Toque numa célula sua vazia.") or "Modo seleção.")
+ end,kind}
+end
+bar(-80,entries)
+bar(-40,{{"⚔ Declarar guerra",function() send("war") end},{"☮ Tratado",function() send("truce") end},{"🤝 Aliança",function() send("ally") end},{"✓ Aceitar",function() send("accept") end}})
+local marker=make("Frame",map,{BackgroundTransparency=1,Size=UDim2.fromOffset(14,14),AnchorPoint=Vector2.new(.5,.5),Visible=false,ZIndex=6})
+make("UIStroke",marker,{Color=Color3.fromRGB(255,221,88),Thickness=2})
+local function selectedInfo()
+ if not selected or not state then return end
+ local id=cells[selected]
+ local n=state.nations[tostring(id)]
+ local structure=state.buildings[tostring(selected)]
+ local text=n and (n.name.." · "..math.floor(n.troops).." tropas atuais da nação") or "Terra livre"
+ if n and id~=state.you then
+  local a,b=state.you,id if a>b then a,b=b,a end
+  local r=state.relations[tostring(a)..":"..tostring(b)]
+  if r and (not r.untilTime or r.untilTime>state.time) then
+   text=text.." · "..({war="Em guerra",ally="Aliado",truce="Trégua"})[r.kind]
+   if r.untilTime then text=text.." ("..math.ceil(r.untilTime-state.time).."s)" end
+  else text=text.." · Neutro" end
+ end
+ if structure then text=text.." · "..state.types[structure].name.." ("..state.types[structure].description..")" end
+ selection.Text=text.." · Avançar para confirmar"
+ marker.Visible=true
+ marker.Position=UDim2.fromScale(((selected-1)%state.w+.5)/state.w,(math.floor((selected-1)/state.w)+.5)/state.h)
+end
+local function pick(p)
+ if not state then return end
+ local rel=p-map.AbsolutePosition
+ local x=math.floor(rel.X/map.AbsoluteSize.X*state.w)
+ local y=math.floor(rel.Y/map.AbsoluteSize.Y*state.h)
+ if x<0 or x>=state.w or y<0 or y>=state.h then return end
+ local i=y*state.w+x+1
+ if cells[i]==-1 then return end
+ selected=i selectedInfo()
+ if not state.nations[tostring(state.you)] then remote:FireServer("attack",i,ratio)
+ elseif mode=="naval" then remote:FireServer("naval",i,ratio)
+ elseif mode then remote:FireServer("build",i,mode) end
+end
+local function within(p)
+ local a,b=view.AbsolutePosition,view.AbsoluteSize
+ return p.X>=a.X and p.Y>=a.Y and p.X<a.X+b.X and p.Y<a.Y+b.Y
+end
+local start,dragInput,scrollStart=nil,nil,nil
+UIS.InputBegan:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+  local p=screenPoint(input.Position)
+  if within(p) then start=p dragInput=input scrollStart=view.CanvasPosition end
+ end
 end)
-control("Parar",function() remote:FireServer("stop") end)
-control("−",function() zoom=math.max(1,zoom-.5) resize() end)
-control("+",function() zoom=math.min(10,zoom+.5) resize() end)
-control("Mapa",function() zoom=1 resize() view.CanvasPosition=Vector2.zero end)
-local function landColor(i,data)
- return Color3.fromRGB(215,215,215)
-end
--- Decorative game regions, not official national borders.
-local regions=nil
-local function prepareRegions(data)
- local seeds={}
- for by=0,data.h-1,11 do
-  for bx=0,data.w-1,12 do
-   local tx=bx+6+((bx*17+by*31)%5-2)
-   local ty=by+5+((bx*7+by*13)%5-2)
-   local best,dist=nil,math.huge
-   for y=by,math.min(by+10,data.h-1) do
-    for x=bx,math.min(bx+11,data.w-1) do
-     local i=y*data.w+x+1
-     if data.cells[i]~=-1 then
-      local d=(x-tx)^2+(y-ty)^2
-      if d<dist then best={x,y} dist=d end
-     end
-    end
-   end
-   if best then table.insert(seeds,best) end
+UIS.InputEnded:Connect(function(input)
+ if start and (input==dragInput or input.UserInputType==Enum.UserInputType.MouseButton1) then
+  local p=screenPoint(input.Position)
+  if (p-start).Magnitude<7 and (view.CanvasPosition-scrollStart).Magnitude<7 and within(p) then pick(p) end
+  start=nil dragInput=nil
+ end
+end)
+UIS.InputChanged:Connect(function(input)
+ if start and dragInput and dragInput.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement then
+  local delta=screenPoint(input.Position)-start
+  view.CanvasPosition=Vector2.new(math.clamp(scrollStart.X-delta.X,0,math.max(0,map.AbsoluteSize.X-view.AbsoluteSize.X)),math.clamp(scrollStart.Y-delta.Y,0,math.max(0,map.AbsoluteSize.Y-view.AbsoluteSize.Y)))
+ end
+ if input.UserInputType==Enum.UserInputType.MouseWheel and within(screenPoint(UIS:GetMouseLocation())) then
+  zoom=math.clamp(zoom*(input.Position.Z>0 and 1.15 or 1/1.15),1,10) resize()
+ end
+end)
+local pinchStart=1
+UIS.TouchPinch:Connect(function(points,scale,velocity,inputState)
+ if #points<2 or not within(screenPoint(points[1])) then return end
+ start=nil
+ if inputState==Enum.UserInputState.Begin then pinchStart=zoom end
+ zoom=math.clamp(pinchStart*scale,1,10) resize()
+end)
+local function rowRender(y)
+ local w,h=state.w,state.h
+ local pool=rows[y] or {} rows[y]=pool local used=0
+ local function rect(x,width,top,height,c)
+  used=used+1
+  local f=pool[used]
+  if not f then f=make("Frame",map,{BorderSizePixel=0,Active=false}) pool[used]=f end
+  f.Position=UDim2.fromScale(x/w,(y+top)/h) f.Size=UDim2.fromScale(width/w,height/h)
+  f.BackgroundColor3=c f.Visible=true
+ end
+ local x=0
+ while x<w do
+  local i=y*w+x+1 local id=cells[i] local shade=id==-1 and water[i] or 0 local stop=x+1
+  while stop<w and cells[y*w+stop+1]==id and (id~=-1 or water[y*w+stop+1]==shade) do stop=stop+1 end
+  rect(x,stop-x,0,1,id==-1 and (shade==1 and Color3.fromRGB(35,97,137) or color(-1)) or color(id))
+  x=stop
+ end
+ local ink=Color3.fromRGB(29,33,37)
+ local function differs(i,j) return not cells[j] or cells[i]~=cells[j] or (cells[i]~=-1 and regions[i]~=regions[j]) end
+ x=0
+ while x<w do
+  local i=y*w+x+1
+  if cells[i]~=-1 and (y==0 or differs(i,i-w)) then
+   local stop=x+1
+   while stop<w do local j=y*w+stop+1 if cells[j]==-1 or (y>0 and not differs(j,j-w)) then break end stop=stop+1 end
+   rect(x,stop-x,0,.14,ink) x=stop
+  else x=x+1 end
+ end
+ for col=0,w-1 do
+  local i=y*w+col+1
+  if cells[i]~=-1 then
+   if col==0 or differs(i,i-1) then rect(col,.14,0,1,ink) end
+   if col==w-1 or cells[i+1]==-1 then rect(col+.86,.14,0,1,ink) end
+   if y==h-1 or cells[i+w]==-1 then rect(col,1,.86,.14,ink) end
   end
  end
- regions={}
- for i,owner in ipairs(data.cells) do
-  if owner~=-1 then
-   local x=(i-1)%data.w
-   local y=math.floor((i-1)/data.w)
-   local best,dist=0,math.huge
-   for k,p in ipairs(seeds) do
-    local d=(x-p[1])^2+(y-p[2])^2
-    if d<dist then best=k dist=d end
-   end
-   regions[i]=best
-   if i%1000==0 then task.wait() end
+ for k=used+1,#pool do pool[k].Visible=false end
+end
+local rendering=false
+local function flush()
+ if rendering then return end rendering=true
+ task.spawn(function()
+  while next(needRows) do
+   local count=0
+   for y in pairs(needRows) do needRows[y]=nil rowRender(y) count=count+1 if count>=8 then break end end
+   task.wait()
   end
- end
- -- Blue shallows plus sparse ocean texture; ocean never becomes conquerable.
- for i,owner in ipairs(data.cells) do
-  if owner==-1 then
-   local x=(i-1)%data.w
-   local y=math.floor((i-1)/data.w)
-   local distance=4
-   for dy=-2,2 do for dx=-2,2 do
-    local xx,yy=x+dx,y+dy
-    if xx>=0 and xx<data.w and yy>=0 and yy<data.h and data.cells[yy*data.w+xx+1]~=-1 then
-     distance=math.min(distance,math.max(math.abs(dx),math.abs(dy)))
-    end
-   end end
-   if distance<=2 or (x*17+y*29)%47==0 then
-    local c=distance==1 and Color3.fromRGB(35,97,137) or distance==2 and Color3.fromRGB(29,81,115) or Color3.fromRGB(26,73,103)
-    make("Frame",map,{Position=UDim2.fromScale(x/data.w,y/data.h),Size=UDim2.fromScale(1/data.w,1/data.h),BorderSizePixel=0,BackgroundColor3=c,Active=false})
-   end
-  end
- end
-end
-local function decorateCell(b,i,data)
- local x=(i-1)%data.w
- local y=math.floor((i-1)/data.w)
- local edges={
-  {x==0 or regions[i-1]~=regions[i],0,0,.15,1},
-  {x==data.w-1 or regions[i+1]~=regions[i],.85,0,.15,1},
-  {y==0 or regions[i-data.w]~=regions[i],0,0,1,.15},
-  {y==data.h-1 or regions[i+data.w]~=regions[i],0,.85,1,.15},
- }
- for _,e in ipairs(edges) do
-  if e[1] then make("Frame",b,{Position=UDim2.fromScale(e[2],e[3]),Size=UDim2.fromScale(e[4],e[5]),BackgroundColor3=Color3.fromRGB(32,35,38),BorderSizePixel=0,Active=false}) end
- end
-end
-local function color(owner)
- if owner==0 then return Color3.fromRGB(215,215,215) end
- if owner==player.UserId then return Color3.fromRGB(74,200,141) end
- return Color3.fromHSV((math.abs(owner)*.173)%1,.55,.85)
-end
-local buildbar=make("Frame",bg,{Position=UDim2.new(0,8,1,-106),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1})
-make("UIListLayout",buildbar,{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center})
-for _,entry in ipairs({{"city","Cidade 500"},{"factory","Fábrica 700"},{"bunker","Bunker 400"},{"port","Porto 900"},{"naval","Invadir mar"}}) do
- local kind=entry[1]
- local b=make("TextButton",buildbar,{Size=UDim2.new(.19,0,1,0),Text=entry[2],TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(36,58,78),TextSize=11,TextWrapped=true,Font=Enum.Font.GothamBold})
- buildButtons[kind]=b
- b.Activated:Connect(function()
-  mode=mode==kind and nil or kind
-  for key,button in pairs(buildButtons) do button.BackgroundColor3=key==mode and Color3.fromRGB(146,107,35) or Color3.fromRGB(36,58,78) end
+  rendering=false
  end)
 end
-local info=make("TextLabel",bg,{Position=UDim2.fromOffset(16,88),Size=UDim2.new(1,-16,0,30),BackgroundColor3=Color3.fromRGB(10,20,34),BackgroundTransparency=.15,Text="",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true,Visible=false,ZIndex=4})
-local noticeUntil=0
-local shipMarkers={}
-local function renderSnapshot(data)
- if data.notice then
-  info.Text=data.notice info.Visible=true noticeUntil=os.clock()+3
-  return
+local function position(i) return UDim2.fromScale(((i-1)%state.w+.5)/state.w,(math.floor((i-1)/state.w)+.5)/state.h) end
+local function buildingIcon(parent,kind)
+ local white=Color3.new(1,1,1)
+ local function r(x,y,w,h) return make("Frame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=white,BorderSizePixel=0,ZIndex=5}) end
+ if kind=="city" then
+  r(4,3,11,13) for x=6,12,3 do for y=5,11,3 do local f=r(x,y,1,2) f.BackgroundColor3=Color3.fromRGB(18,33,43) end end
+ elseif kind=="factory" then
+  r(3,9,13,7) r(12,3,3,8) r(4,7,3,3) r(8,6,3,4)
+ elseif kind=="bunker" then
+  r(4,7,11,8) r(6,5,7,2) local f=r(7,9,5,2) f.BackgroundColor3=Color3.fromRGB(18,33,43)
+ else
+  r(9,3,2,13) r(5,7,10,2) r(4,13,12,2) r(3,10,2,4) r(15,10,2,4)
  end
- if os.clock()>noticeUntil then info.Visible=false end
- state=data
- if not regions then prepareRegions(data) end
- for i,owner in ipairs(data.cells) do
-  if owner~=-1 then
-   local b=buttons[i]
-   if not b then
-    local index=i
-    b=make("TextButton",map,{Position=UDim2.fromScale(((i-1)%data.w)/data.w,math.floor((i-1)/data.w)/data.h),Size=UDim2.fromScale(1/data.w,1/data.h),BorderSizePixel=0,Text="",AutoButtonColor=false})
-    b.Activated:Connect(function()
-     local owner=state.cells[index]
-     local nation=state.nations[tostring(owner)]
-     info.Text=nation and string.format("%s • %d tropas • %d células",nation.name,nation.troops,nation.land) or "Território livre"
-     info.Visible=true noticeUntil=os.clock()+3
-     if mode=="naval" then remote:FireServer("naval",index,ratio)
-     elseif mode then remote:FireServer("build",index,mode)
-     else remote:FireServer("attack",index,ratio) end
-    end)
-    decorateCell(b,i,data)
-    buttons[i]=b
-    if i%300==0 then task.wait() end
-   end
-   if lastOwners[i]~=owner then
-    b.BackgroundColor3=owner==0 and landColor(i,data) or color(owner)
-    lastOwners[i]=owner
-   end
-   local kind=data.buildings and data.buildings[tostring(i)]
-   if lastBuildings[i]~=(kind or false) then
-    b.Text=kind and data.types[kind].mark or ""
-    b.TextColor3=Color3.fromRGB(10,20,34)
-    b.TextScaled=true
-    lastBuildings[i]=kind or false
-   end
-  end
- end
- for id,marker in pairs(shipMarkers) do
-  if not (data.fleets and data.fleets[id]) then marker:Destroy() shipMarkers[id]=nil end
- end
- for id,f in pairs(data.fleets or {}) do
-  local marker=shipMarkers[id]
-  if not marker then
-   marker=make("TextLabel",map,{Size=UDim2.fromOffset(18,18),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=color(tonumber(id)),Text="▲",TextColor3=Color3.new(1,1,1),TextSize=14,ZIndex=3})
-   shipMarkers[id]=marker
-  end
-  local progress=1-f.remaining/f.duration
-  local cell=f.route[math.min(#f.route,1+math.floor(progress*(#f.route-1)))]
-  marker.Position=UDim2.fromScale(((cell-1)%data.w+.5)/data.w,(math.floor((cell-1)/data.w)+.5)/data.h)
- end
- local n=data.nations[player.UserId] or data.nations[tostring(player.UserId)]
- if data.winner then status.Text="VITÓRIA: "..data.winner.." • 80% do mundo conquistado"
- elseif n and n.land<=0 then status.Text="Seu território foi conquistado. Entre em um novo servidor para jogar novamente."
- elseif n then
-  status.Text=string.format("%s  |  Tropas: %d  |  Ouro: %d  |  Mundo: %.1f%%\nSelecione construção e toque em uma célula sua. Toque novamente no botão para voltar ao ataque.",n.name,n.troops,n.gold,n.land/data.total*100)
- else status.Text="Escolha uma célula sem dono para fundar sua nação. Seu território terá verde vivo.\nDepois, toque em terras vizinhas para expandir. Use + e − para zoom."
- end
- local fleet=data.fleets and data.fleets[tostring(player.UserId)]
- if fleet and not data.winner then status.Text=status.Text.." | Frota: "..fleet.remaining.."s ("..fleet.troops.." tropas)" end
- resize()
 end
--- Coalesce snapshots while the large map is being initialized across frames.
-local rendering=false
-local pending=nil
+local function dynamic()
+ for key,obj in pairs(icons) do if not state.buildings[key] then obj:Destroy() icons[key]=nil end end
+ for key,kind in pairs(state.buildings) do
+  local obj=icons[key]
+  if not obj then obj=make("Frame",map,{Size=UDim2.fromOffset(19,19),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=Color3.fromRGB(18,33,43),BorderSizePixel=0,ZIndex=4}) buildingIcon(obj,kind) icons[key]=obj end
+  obj.Position=position(tonumber(key))
+ end
+ local live={}
+ for id,n in pairs(state.nations) do if n.land>0 and n.target~=nil then
+  local key="front"..id live[key]=true
+  local obj=labels[key]
+  if not obj then obj=make("TextLabel",map,{Size=UDim2.fromOffset(142,32),AnchorPoint=Vector2.new(.5,1),BackgroundColor3=Color3.fromRGB(15,30,42),TextColor3=Color3.new(1,1,1),TextSize=11,TextWrapped=true,ZIndex=5}) labels[key]=obj end
+  obj.Position=position(n.front)
+  obj.Text=n.name.." · "..math.floor(n.troops).." tropas\n"..n.status
+ end end
+ for id,f in pairs(state.fleets) do
+  local key="ship"..id live[key]=true
+  local obj=labels[key]
+  if not obj then obj=make("TextLabel",map,{Size=UDim2.fromOffset(88,23),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=Color3.fromRGB(19,42,57),TextColor3=Color3.new(1,1,1),TextSize=12,ZIndex=5}) labels[key]=obj end
+  local k=math.clamp(1+math.floor((1-f.remaining/f.duration)*(#f.route-1)),1,#f.route)
+  obj.Position=position(f.route[k]) obj.Text="⛵ "..f.troops.." · "..math.ceil(f.remaining).."s"
+ end
+ for key,obj in pairs(labels) do if not live[key] then obj:Destroy() labels[key]=nil end end
+ local n=state.nations[tostring(state.you)]
+ status.Text=n and string.format("Tropas %d  ·  Ouro %d  ·  Mundo %.1f%%  ·  %s",math.floor(n.troops),math.floor(n.gold),n.land/state.total*100,n.status) or "Escolha uma célula cinza para começar."
+ if state.winner then status.Text="VITÓRIA: "..state.winner.." · 80% conquistados. Use Reiniciar."
+ elseif n and n.land<=0 then status.Text="DERROTA · Seu território foi conquistado. Reiniciar quando não houver outros jogadores ativos." end
+ if state.offers then selection.Text="Proposta de "..(state.nations[tostring(state.offers.from)] or {name="nação"}).name.." · selecione o território dela e Aceitar."
+ else selectedInfo() end
+end
 remote.OnClientEvent:Connect(function(data)
- if data.notice then
-  info.Text=data.notice info.Visible=true noticeUntil=os.clock()+3
-  return
+ if data.notice then message(data.notice) return end
+ if data.cells then
+  if round~=data.round then
+   selected=nil marker.Visible=false selection.Text="Toque em terra livre para fundar sua nação."
+   for _,pool in pairs(rows) do for _,f in ipairs(pool) do f:Destroy() end end
+   rows={} needRows={} round=data.round
+  end
+  cells=data.cells regions={} water={}
+  for y,line in ipairs(data.regionRows) do for x=1,data.w do regions[(y-1)*data.w+x]=tonumber(string.sub(line,(x-1)*3+1,x*3),16) end end
+  for i,v in ipairs(cells) do
+   if v==-1 then
+    local x=(i-1)%data.w
+    water[i]=((x>0 and cells[i-1]~=-1) or (x<data.w-1 and cells[i+1]~=-1) or (i>data.w and cells[i-data.w]~=-1) or (i<=#cells-data.w and cells[i+data.w]~=-1)) and 1 or 0
+   end
+  end
+  for y=0,data.h-1 do needRows[y]=true end
+ elseif round~=data.round then remote:FireServer("sync") return end
+ state=data
+ for _,d in ipairs(data.delta or {}) do
+  cells[d[1]]=d[2] local y=math.floor((d[1]-1)/data.w)
+  needRows[y]=true if y>0 then needRows[y-1]=true end if y<data.h-1 then needRows[y+1]=true end
  end
- pending=data
- if rendering then return end
- rendering=true
- while pending do
-  local latest=pending pending=nil
-  renderSnapshot(latest)
- end
- rendering=false
+ resize() dynamic() flush()
 end)
 remote:FireServer("sync")
-
-

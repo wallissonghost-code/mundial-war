@@ -13,6 +13,12 @@
           "$path": "src/client.client.lua"
         }
       }
+    },
+    "Players": {
+      "$className": "Players",
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
     }
   }
 }

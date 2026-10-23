@@ -24,164 +24,83 @@ root = Path(__file__).resolve().parents[1]
 for file in (root / "src").glob("*.lua"):
     check(file.read_text())
     print("Syntax OK:", file.name)
-source = (root / "src/server.server.lua").read_text()
-core = source[source.index("local W,H"):source.index("local winner=nil")]
-check(core + r'''
-assert(#cells==W*H)
-local bots=0
-for _,n in pairs(nations) do bots=bots+1 end
-assert(bots==6)
-local seed
-for i,owner in ipairs(cells) do
- if owner==0 and #neighbors(i)==4 then
-  local free=true
-  for _,j in ipairs(neighbors(i)) do if cells[j]~=0 then free=false end end
-  if free then seed=i break end
- end
-end
-assert(spawn(123,"Test",seed))
-assert(not spawn(456,"Overlap",seed))
-local n=nations[123]
-assert(not build(123,seed,"city"),"Cannot spend missing gold")
-n.gold=500
-assert(not build(123,seed,"unknown"))
-assert(not build(123,seed+1,"city"),"Must own land")
-assert(build(123,seed,"city"))
-assert(n.gold==0)
-n.gold=1000
-assert(not build(123,seed,"factory"),"One building per cell")
-assert(n.gold==1000)
-local t,cap,g=bonuses(123)
-assert(t==30 and cap==2000 and g==0)
-local previous=n.troops
-step(123,n)
-assert(n.troops==previous+117)
-n.target=0
-previous=n.troops
-step(123,n)
-assert(n.land>1 and n.troops<previous+117)
-local free=frontier(123,0)[1]
-assert(free)
-cells[free]=456
-nations[456]={name="Enemy",troops=0,gold=1000,land=1,ratio=.25}
-assert(build(456,free,"factory"))
-local beforeGold=nations[456].gold
-step(456,nations[456])
-assert(nations[456].gold==beforeGold+41)
-n.target=456 n.troops=10000
-step(123,n)
-assert(cells[free]==123 and nations[456].land==0)
-local _,_,income=bonuses(123)
-assert(income==35,"Captured factory must transfer income")
-local b=frontier(123,0)[1]
-cells[b]=789
-nations[789]={name="Bunker",troops=0,gold=400,land=1,ratio=.25}
-assert(build(789,b,"bunker"))
-n.troops=100 n.ratio=.1 n.target=789
-step(123,n)
-assert(cells[b]==789,"Insufficient attack budget")
-n.troops=1000 n.ratio=1
-local growth=85+n.land*2+30
-step(123,n)
-assert(cells[b]==123 and n.troops==1000+growth-70,"Bunker doubles conquest cost")
-for round=1,50 do
- for id,m in pairs(nations) do m.target=0 step(id,m) end
-end
-local counts={}
-for _,id in ipairs(cells) do
- if id~=0 and id~=-1 then counts[id]=(counts[id] or 0)+1 end
-end
-for id,m in pairs(nations) do
- assert(m.land==(counts[id] or 0),"Land accounting")
- assert(m.troops>=0 and m.gold>=0,"No negative balances")
-end
-print("PASS: spawn, expansion, costs, city, factory, bunker, capture and land accounting")
-''', True)
 
-check(core + r'''
--- Controlled two-island map tests transport independently of continent art.
-for i=1,#cells do cells[i]=-1 end
-for k in pairs(nations) do nations[k]=nil end
-for k in pairs(buildings) do buildings[k]=nil end
-for k in pairs(coastal) do coastal[k]=nil end
-local origin,target=1910,1980
-cells[origin]=0 cells[target]=0
-coastal[origin]=true coastal[target]=true
-assert(spawn(101,"Sailor",origin))
+import json
+m=json.loads((root/'data/reference-mask.json').read_text())
+def core(rows):
+    return f"local W,H={len(rows[0])},{len(rows)}\nlocal landRows={{"+','.join(json.dumps(r) for r in rows)+"}\n"+(root/'engine/core.lua').read_text()
+check(core(['1'*40]*20)+r'''
+assert(spawn(101,"Test",401))
+assert(not spawn(202,"Overlap",401))
 local n=nations[101]
-n.gold=3000 n.troops=2000
-assert(not embark(101,target,.5),"Requires port")
-local gold=n.gold
-coastal[origin]=nil
-assert(not build(101,origin,"port"),"Inland port rejected")
-coastal[origin]=true
-assert(build(101,origin,"port"))
-assert(n.gold==gold-900)
-assert(not embark(101,target,0/0),"NaN rejected")
-assert(not embark(101,target,2),"Invalid percent rejected")
-assert(not embark(101,origin,.5),"Own target rejected")
-assert(not embark(101,1,.5),"Water target rejected")
-local route=seaRoute(101,target)
-assert(route and route[#route]==target)
-for i=1,#route-1 do
- assert(cells[route[i]]==-1,"Route crosses water only")
- if i>1 then
-  local adjacent=false
-  for _,j in ipairs(neighbors(route[i-1])) do if j==route[i] then adjacent=true end end
-  assert(adjacent,"Continuous route")
- end
+assert(order(101,431,.25))
+local before=n.troops
+step(101,n)
+assert(n.land>1 and n.troops==before+87*.25-(n.land-1)*5)
+for k=1,39 do step(101,n) end
+assert(n.land>150,"Expansion should advance visibly")
+n.target=nil n.gold=500
+assert(build(101,401,"city"))
+assert(n.gold==0 and not build(101,401,"factory"))
+local t,c,g=bonuses(101) assert(t==30 and c==2000 and g==0)
+n.troops=1e8 step(101,n) assert(n.troops==5000+n.land*250+2000)
+local counts={} for _,id in ipairs(cells) do counts[id]=(counts[id] or 0)+1 end
+assert(counts[101]==n.land)
+resetRound()
+assert(spawn(101,"Test",401) and spawn(-2,"Enemy",402))
+claim(-2,441) nations[-2].troops=0 nations[-2].gold=400
+assert(build(-2,402,"bunker"))
+n=nations[101] n.troops=10
+assert(not order(101,402,1))
+assert(diplomacy(101,-2,"war") and order(101,402,1))
+step(101,n)
+assert(cells[402]==-2 and cells[441]==101,"Expensive candidate must not block cheap candidate")
+assert(defense(402)==50)
+n.troops=1000
+assert(diplomacy(101,-2,"truce"))
+assert(n.target==nil and cells[441]==101)
+assert(not diplomacy(101,-2,"war") and not order(101,402,1))
+clock=91 assert(relation(101,-2)=="neutral")
+assert(diplomacy(101,-2,"ally"))
+assert(not order(101,402,1))
+assert(diplomacy(-2,101,"truce"))
+assert(offers[101] and diplomacy(101,-2,"accept"))
+assert(not offers[101])
+resetRound() assert(not started and next(nations)==nil)
+print("PASS: Lua expansion, affordable frontier, buildings, capacity, land accounting, diplomacy, reset")
+''',True)
+check(core(['000000000000','011000001100','011000001100','000000000000','000000000000'])+r'''
+assert(spawn(101,"Sailor",14))
+local n=nations[101] n.gold=3000 n.troops=2000
+assert(not embark(101,21,.5))
+assert(build(101,14,"port"))
+assert(n.gold==2100)
+assert(not embark(101,1,.5) and not embark(101,21,0/0))
+assert(embark(101,21,.5))
+assert(n.gold==1850 and n.troops==1000)
+local f=fleets[101]
+for k=1,#f.route-1 do
+ assert(cells[f.route[k]]==-1)
+ local adjacent=false
+ for _,j in ipairs(adj[f.route[k]]) do if j==f.route[k+1] then adjacent=true end end
+ assert(adjacent)
 end
-n.gold=249
-assert(not embark(101,target,.5),"Insufficient gold rejected")
-n.gold=1000 n.troops=100
-assert(not embark(101,target,.5),"Minimum expedition troops")
-n.troops=2000
-assert(embark(101,target,.5))
-assert(n.gold==750 and n.troops==1000,"Deduct once at launch")
-assert(not embark(101,target,.5),"One active fleet")
-local duration=fleets[101].duration
-assert(duration>=3)
-for i=1,duration-1 do advanceFleets() assert(cells[target]==0) end
-advanceFleets()
-assert(cells[target]==101 and n.land==2 and n.troops==1930)
-assert(not fleets[101])
--- An inaccessible inland target cannot be reached.
-local inland=2050
-cells[inland]=0
-assert(not seaRoute(101,inland))
--- Failed landing damages a defender without changing land ownership.
-cells[target]=202 n.land=1
-nations[202]={name="Defender",troops=1000,land=1,gold=0}
-n.troops=400 n.gold=1000
-assert(embark(101,target,.5))
-for i=1,fleets[101].duration do advanceFleets() end
-assert(cells[target]==202 and nations[202].troops==900 and n.land==1)
--- If allies' own troops already captured the destination, troops return.
-n.troops=1000 n.gold=1000
-assert(embark(101,target,.5))
-cells[target]=101 n.land=2 nations[202].land=0
-for i=1,fleets[101].duration do advanceFleets() end
-assert(n.troops==1000)
--- Elimination cancels the fleet.
-cells[target]=0 n.land=1 n.gold=1000
-assert(embark(101,target,.5))
-n.land=0
-advanceFleets()
-assert(not fleets[101] and cells[target]==0)
-print("PASS: coastal ports, sea routes, resources, travel time, landing, failure and elimination")
-''', True)
-
-
-check(core + r'''
-local function at(x,y)
- return cells[math.floor(y*H)*W+math.floor(x*W)+1]
-end
-for _,p in ipairs({{.28,.60},{.52,.50},{.82,.73},{.18,.20},{.77,.30},{.50,.97}}) do
- assert(at(p[1],p[2])~=-1,"Reference land sample")
-end
-for _,p in ipairs({{.40,.65},{.08,.65},{.68,.75}}) do
- assert(at(p[1],p[2])==-1,"Reference ocean sample")
-end
-assert(W==320 and H==180 and total>20000 and total<22000)
-print("PASS: reference silhouette, land/ocean samples, Antarctica and large map dimensions")
-''', True)
+advanceFleets(f.duration-.25) assert(cells[21]==0)
+advanceFleets(.25) assert(cells[21]==101 and n.troops==1945 and not fleets[101])
+assert(spawn(-2,"Enemy",22)) nations[-2].troops=0
+assert(diplomacy(101,-2,"war") and embark(101,22,.5))
+assert(diplomacy(101,-2,"truce"))
+advanceFleets(100) assert(cells[22]==-2 and n.troops==1945)
+print("PASS: Lua ports, water routes, invalid input, travel time, landing, peace during naval travel")
+''',True)
+check(core(m['rows'])+r'''
+assert(W==320 and H==180 and total==22043)
+assert(next(nations)==nil) tick(.25) assert(next(nations)==nil)
+assert(spawn(101,"Test",90*W+167)) seedBots() started=true
+assert(order(101,frontier(101,0)[1],.25))
+for k=1,240 do tick(.25) end
+local counts={} for _,id in ipairs(cells) do counts[id]=(counts[id] or 0)+1 end
+for id,n in pairs(nations) do assert(n.land==(counts[id] or 0) and n.troops>=0 and n.gold>=0) end
+assert(nations[101].land>150)
+print("PASS: Lua real map 60-second simulation and accounting")
+''',True)
