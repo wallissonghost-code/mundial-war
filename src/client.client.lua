@@ -15,12 +15,14 @@ local function make(class,parent,props)
  return obj
 end
 local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(10,20,34),BorderSizePixel=0})
-local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.1",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
+local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.2",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
 local status=make("TextLabel",bg,{Position=UDim2.fromOffset(8,36),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1,Text="Conectando…",TextColor3=Color3.new(1,1,1),TextSize=14,TextWrapped=true,Font=Enum.Font.Gotham})
-local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-148),BackgroundColor3=Color3.fromRGB(20,61,89),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
+local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-200),BackgroundColor3=Color3.fromRGB(20,61,89),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
 local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,400)})
 local zoom,ratio,state=1,.25,nil
 local buttons={}
+local mode=nil
+local buildButtons={}
 local function resize()
  local width=math.max(100,math.min(view.AbsoluteSize.X,view.AbsoluteSize.Y*2))*zoom
  map.Size=UDim2.fromOffset(width,width/2)
@@ -49,7 +51,25 @@ local function color(owner)
  if owner==player.UserId then return Color3.fromRGB(74,200,141) end
  return Color3.fromHSV((math.abs(owner)*.173)%1,.55,.85)
 end
+local buildbar=make("Frame",bg,{Position=UDim2.new(0,8,1,-106),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1})
+make("UIListLayout",buildbar,{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center})
+for _,entry in ipairs({{"city","Cidade 500"},{"factory","Fábrica 700"},{"bunker","Bunker 400"}}) do
+ local kind=entry[1]
+ local b=make("TextButton",buildbar,{Size=UDim2.new(.32,0,1,0),Text=entry[2],TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(36,58,78),TextSize=12,TextWrapped=true,Font=Enum.Font.GothamBold})
+ buildButtons[kind]=b
+ b.Activated:Connect(function()
+  mode=mode==kind and nil or kind
+  for key,button in pairs(buildButtons) do button.BackgroundColor3=key==mode and Color3.fromRGB(146,107,35) or Color3.fromRGB(36,58,78) end
+ end)
+end
+local info=make("TextLabel",view,{Position=UDim2.fromOffset(8,8),Size=UDim2.new(1,-16,0,30),BackgroundColor3=Color3.fromRGB(10,20,34),BackgroundTransparency=.15,Text="",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true,Visible=false,ZIndex=4})
+local noticeUntil=0
 remote.OnClientEvent:Connect(function(data)
+ if data.notice then
+  info.Text=data.notice info.Visible=true noticeUntil=os.clock()+3
+  return
+ end
+ if os.clock()>noticeUntil then info.Visible=false end
  state=data
  for i,owner in ipairs(data.cells) do
   if owner~=-1 then
@@ -58,18 +78,27 @@ remote.OnClientEvent:Connect(function(data)
     local index=i
     b=make("TextButton",map,{Position=UDim2.fromScale(((i-1)%data.w)/data.w,math.floor((i-1)/data.w)/data.h),Size=UDim2.fromScale(1/data.w,1/data.h),BorderSizePixel=0,Text="",AutoButtonColor=false})
     b.Activated:Connect(function()
-     remote:FireServer("attack",index,ratio)
+     local owner=state.cells[index]
+     local nation=state.nations[tostring(owner)]
+     info.Text=nation and string.format("%s • %d tropas • %d células",nation.name,nation.troops,nation.land) or "Território livre"
+     info.Visible=true noticeUntil=os.clock()+3
+     if mode then remote:FireServer("build",index,mode)
+     else remote:FireServer("attack",index,ratio) end
     end)
     buttons[i]=b
    end
    b.BackgroundColor3=color(owner)
+   local kind=data.buildings and data.buildings[tostring(i)]
+   b.Text=kind and data.types[kind].mark or ""
+   b.TextColor3=Color3.fromRGB(10,20,34)
+   b.TextScaled=true
   end
  end
  local n=data.nations[player.UserId] or data.nations[tostring(player.UserId)]
  if data.winner then status.Text="VITÓRIA: "..data.winner.." • 80% do mundo conquistado"
  elseif n and n.land<=0 then status.Text="Seu território foi conquistado. Entre em um novo servidor para jogar novamente."
  elseif n then
-  status.Text=string.format("%s  |  Tropas: %d  |  Ouro: %d  |  Mundo: %.1f%%\nToque em terra vizinha para expandir ou atacar. Arraste para navegar.",n.name,n.troops,n.gold,n.land/data.total*100)
+  status.Text=string.format("%s  |  Tropas: %d  |  Ouro: %d  |  Mundo: %.1f%%\nSelecione construção e toque em uma célula sua. Toque novamente no botão para voltar ao ataque.",n.name,n.troops,n.gold,n.land/data.total*100)
  else status.Text="Escolha uma célula bege para fundar sua nação. Verde será seu território.\nDepois, toque em terras vizinhas para expandir. Use + e − para zoom."
  end
  resize()
