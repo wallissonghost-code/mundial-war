@@ -1,73 +1,34 @@
-# Mundial War — Alpha 0.4
+# Mundial War — Alpha 0.5
 
-Protótipo original de conquista territorial para Roblox, inspirado no gênero de RoFront/OpenFront. Não utiliza código nem imagens desses jogos.
+Jogo de conquista territorial para Roblox. Esta versão usa a silhueta da imagem fornecida pelo usuário, em proporção 16:9: continentes, ilhas e faixa da Antártida seguem a ilustração, não uma projeção cartográfica oficial.
 
-## Instalação no Roblox Studio
-Este repositório começou vazio. Não existe publicação automática GitHub → Roblox configurada.
-1. Abra uma experiência nova no Roblox Studio.
-2. Crie um Script chamado MundialWar em ServerScriptService e cole src/server.server.lua.
-3. Crie um LocalScript chamado MundialWar em StarterPlayer > StarterPlayerScripts e cole src/client.client.lua.
-4. Clique em Play. Escolha uma célula bege para começar.
-5. Para testar multiplayer, use o teste de servidor com dois jogadores no Studio.
+## Abrir no Studio
+Execute python tools/build_place.py e abra dist/Mundial_War_Alpha_0_5.rbxlx em Arquivo → Abrir do arquivo; depois Jogar.
+Também é possível usar default.project.json com Rojo, ou instalar src/server.server.lua em ServerScriptService e src/client.client.lua como LocalScript em StarterPlayerScripts.
+Não há publicação automática GitHub → Roblox configurada.
 
-Alternativamente, sincronize usando Rojo com default.project.json. O arquivo descreve apenas os dois scripts; não altera o Workspace.
+## Mapa e visual
+- 320 × 180 = 57.600 células; 20.699 terrestres.
+- Terra neutra cinza-claro uniforme, contornos escuros e mar azul com faixas de litoral.
+- Silhueta extraída da referência do usuário em data/reference-mask.json.
+- Regiões internas são divisões decorativas geradas para o jogo, não uma cópia exata das divisões desenhadas nem fronteiras políticas oficiais.
+- Zoom até 10×; mapa começa inteiro na tela. Células seguem a cor do dono após conquista.
+- Geração da interface em etapas e agrupamento das atualizações recebidas durante a inicialização.
+- Data/land.geojson preserva a fonte Natural Earth de versões anteriores; não é usada na silhueta atual.
+- Para regenerar: python tools/generate_map.py; python tools/build_place.py.
 
 ## Jogabilidade
-- Seis bots, contornos geográficos do Natural Earth e água não conquistável.
-- Jogador começa com 2.500 tropas; bots com 1.500.
-- Toque em terra neutra adjacente para iniciar expansão contínua.
-- Toque em território de um inimigo com fronteira compartilhada para atacar.
-- Percentual selecionado limita o gasto de tropas por segundo; não é um envio único.
-- Parar cancela a operação; + / − ajustam zoom; arrastar navega pelo mapa.
-- Cidade (500 ouro): +30 tropas/s e +2.000 de capacidade.
-- Fábrica (700 ouro): +35 ouro/s.
-- Bunker (400 ouro): dobra o custo de conquista da sua célula.
-- Selecione uma construção e toque em uma célula sua vazia; selecione o mesmo botão para voltar ao modo ataque.
-- Construções capturadas passam a beneficiar o novo dono. Bots também constroem.
-- Ao tocar em território, um aviso mostra dono, tropas e quantidade de células.
-- Vitória ao conquistar 80% das células terrestres. Reinicie o servidor para outra partida.
-- Jogador eliminado permanece como observador até sair.
-- O servidor valida ações, controla economia, combate e propriedade.
+Escolha terra sem dono. Toque em território vizinho para expandir ou atacar continuamente; Parar cancela a operação terrestre.
+Percentual limita gasto por rodada terrestre e determina tropas enviadas numa frota.
+Cidade: 500 ouro, +30 tropas/s e +2.000 capacidade. Fábrica: 700 ouro, +35 ouro/s. Bunker: 400 ouro, dobra defesa da célula.
+Porto: 900 ouro, exige litoral e gera +5 ouro/s.
+Selecione uma construção e toque em célula sua vazia; selecione o mesmo botão para desativar.
+Para navegar: porto próprio, Invadir mar, destino costeiro acessível pela água; custa 250 ouro e mínimo de 100 tropas. Uma frota por nação.
+Desembarque custa defesa +50 tropas. Sobreviventes retornam; derrota destrói frota e causa baixas de metade do efetivo ao defensor. Eliminação ou saída cancela a frota.
+Seis bots expandem, constroem e navegam. Vitória com 80% das terras; reinicie o servidor para nova partida.
 
-## Estado e limites
-Mapa com contornos geográficos reais rasterizados, ainda sem fronteiras políticas. Ainda sem tratados, persistência ou matchmaking. Portos permitem atravessar o oceano e conquistar continentes separados.
-Interface desenha células em ScreenGui; não depende da distância de renderização de peças 3D.
-Validação executada: sintaxe Lua 5.4 de ambos os scripts e simulação da lógica de spawn dos seis bots, expansão, custo de tropas, consistência de propriedade e combate.
-Ainda é necessário testar UI, toque, desempenho e multiplayer dentro do Roblox Studio. A simulação local não substitui testes no motor Roblox.
-
-Referência técnica: https://create.roblox.com/docs/scripting/events/remote
-
-## Testes de regressão
-Em Linux com Python e liblua5.4: `python tests/test_core.py`.
-Alpha 0.4: testes cobrem saldo insuficiente, célula inimiga, construção duplicada, bônus da cidade e fábrica, defesa do bunker, captura de construções e consistência de territórios após 50 rodadas. Lua 5.4 valida o subconjunto Lua usado aqui; não valida APIs Roblox nem aparência da interface.
-
-## Invasões navais — Alpha 0.4
-- Porto: 900 ouro, somente em célula costeira própria e vazia; gera +5 ouro/s.
-- Selecione o percentual de tropas, ative **Invadir mar** e toque numa costa neutra ou inimiga.
-- Cada viagem custa 250 ouro e desconta imediatamente as tropas selecionadas (mínimo 100); somente uma frota por nação.
-- O servidor procura um caminho pela água a partir dos portos sob seu controle. Não atravessa terra.
-- A viagem dura pelo menos 3 segundos; triângulos mostram a frota e o cabeçalho indica o tempo restante.
-- Desembarcar custa a defesa da célula +50 tropas; bunker dobra a parcela de defesa. Se vencer, captura a célula e devolve sobreviventes à reserva.
-- Se perder, a frota é destruída; inflige baixas de metade de seu efetivo ao defensor. Se o destino já for seu, todas as tropas retornam.
-- Perder o porto depois de partir não cancela a viagem. Perder todo o território ou sair cancela a frota.
-- Parar cancela apenas a expansão terrestre, não uma viagem já enviada.
-- Bots constroem portos e enviam frotas. Água continua sem dono.
-
-## Arquivo pronto para Studio
-Execute `python tools/build_place.py` e abra `dist/Mundial_War_Alpha_0_4.rbxlx` no Studio por Arquivo → Abrir do arquivo. O pacote contém os dois scripts e não depende de baixar o template Baseplate. Sua abertura e execução no motor Roblox ainda precisam de validação manual.
-Testes navais: portos costeiros, caminho de água contínuo, destinos inválidos, valores inválidos, saldo, limite de frota, tempo de viagem, sucesso/falha de desembarque, devolução de tropas e eliminação.
-
-
-## Mapa geográfico — Alpha 0.4
-- Dados de terra: Natural Earth 1:110m (domínio público), arquivo original em data/land.geojson.
-- Fonte: https://github.com/nvkelso/natural-earth-vector/blob/master/geojson/ne_110m_land.geojson
-- Licença: https://www.naturalearthdata.com/about/terms-of-use/
-- Grade 240 × 100; 24.000 células totais e 7.124 terrestres. Versão anterior: 100 × 50.
-- Projeção equirretangular: longitudes -180 a 180, latitudes 85 a -65. Antártida excluída da área de jogo.
-- A projeção conserva o posicionamento, mas não é de áreas iguais; regiões polares ficam ampliadas.
-- Costas e ilhas obedecem à resolução da grade; ilhas menores que uma célula podem desaparecer.
-- Cores de deserto, vegetação e gelo são estilizadas; não são imagem de satélite nem dados de relevo.
-- Bots reposicionados por longitude/latitude. Enquadramento ajustado à proporção 2,4:1.
-- Cliente atualiza cores e símbolos apenas quando mudam. Desempenho em aparelhos reais ainda precisa ser medido.
-- Para regenerar os contornos: instale Pillow e rode python tools/generate_map.py; depois python tools/build_place.py.
-- Testes validam locais conhecidos de terra e oceano, dimensões e integridade da lógica terrestre/naval.
+## Validação e limites
+python tests/test_core.py (Python + liblua5.4 em Linux).
+Testes: construções, economia, conquista, navegação, recursos inválidos, tempo de viagem, captura, eliminação, dimensões e amostras da silhueta.
+Arquivo XML validado com os scripts nas posições corretas.
+Ainda é necessário testar execução, UI, toque, multiplayer e desempenho no Roblox Studio. Não há tratados, persistência ou fronteiras políticas.
