@@ -1,4 +1,4 @@
-# Mundial War — Alpha 0.3
+# Mundial War — Alpha 0.4
 
 Protótipo original de conquista territorial para Roblox, inspirado no gênero de RoFront/OpenFront. Não utiliza código nem imagens desses jogos.
 
@@ -13,7 +13,7 @@ Este repositório começou vazio. Não existe publicação automática GitHub �
 Alternativamente, sincronize usando Rojo com default.project.json. O arquivo descreve apenas os dois scripts; não altera o Workspace.
 
 ## Jogabilidade
-- Seis bots, continentes simplificados e água não conquistável.
+- Seis bots, contornos geográficos do Natural Earth e água não conquistável.
 - Jogador começa com 2.500 tropas; bots com 1.500.
 - Toque em terra neutra adjacente para iniciar expansão contínua.
 - Toque em território de um inimigo com fronteira compartilhada para atacar.
@@ -30,7 +30,7 @@ Alternativamente, sincronize usando Rojo com default.project.json. O arquivo des
 - O servidor valida ações, controla economia, combate e propriedade.
 
 ## Estado e limites
-Mapa esquemático, sem países reais ou fronteiras políticas. Ainda sem tratados, persistência ou matchmaking. Portos permitem atravessar o oceano e conquistar continentes separados.
+Mapa com contornos geográficos reais rasterizados, ainda sem fronteiras políticas. Ainda sem tratados, persistência ou matchmaking. Portos permitem atravessar o oceano e conquistar continentes separados.
 Interface desenha células em ScreenGui; não depende da distância de renderização de peças 3D.
 Validação executada: sintaxe Lua 5.4 de ambos os scripts e simulação da lógica de spawn dos seis bots, expansão, custo de tropas, consistência de propriedade e combate.
 Ainda é necessário testar UI, toque, desempenho e multiplayer dentro do Roblox Studio. A simulação local não substitui testes no motor Roblox.
@@ -39,9 +39,9 @@ Referência técnica: https://create.roblox.com/docs/scripting/events/remote
 
 ## Testes de regressão
 Em Linux com Python e liblua5.4: `python tests/test_core.py`.
-Alpha 0.3: testes cobrem saldo insuficiente, célula inimiga, construção duplicada, bônus da cidade e fábrica, defesa do bunker, captura de construções e consistência de territórios após 50 rodadas. Lua 5.4 valida o subconjunto Lua usado aqui; não valida APIs Roblox nem aparência da interface.
+Alpha 0.4: testes cobrem saldo insuficiente, célula inimiga, construção duplicada, bônus da cidade e fábrica, defesa do bunker, captura de construções e consistência de territórios após 50 rodadas. Lua 5.4 valida o subconjunto Lua usado aqui; não valida APIs Roblox nem aparência da interface.
 
-## Invasões navais — Alpha 0.3
+## Invasões navais — Alpha 0.4
 - Porto: 900 ouro, somente em célula costeira própria e vazia; gera +5 ouro/s.
 - Selecione o percentual de tropas, ative **Invadir mar** e toque numa costa neutra ou inimiga.
 - Cada viagem custa 250 ouro e desconta imediatamente as tropas selecionadas (mínimo 100); somente uma frota por nação.
@@ -54,5 +54,20 @@ Alpha 0.3: testes cobrem saldo insuficiente, célula inimiga, construção dupli
 - Bots constroem portos e enviam frotas. Água continua sem dono.
 
 ## Arquivo pronto para Studio
-Execute `python tools/build_place.py` e abra `dist/Mundial_War_Alpha_0_3.rbxlx` no Studio por Arquivo → Abrir do arquivo. O pacote contém os dois scripts e não depende de baixar o template Baseplate. Sua abertura e execução no motor Roblox ainda precisam de validação manual.
+Execute `python tools/build_place.py` e abra `dist/Mundial_War_Alpha_0_4.rbxlx` no Studio por Arquivo → Abrir do arquivo. O pacote contém os dois scripts e não depende de baixar o template Baseplate. Sua abertura e execução no motor Roblox ainda precisam de validação manual.
 Testes navais: portos costeiros, caminho de água contínuo, destinos inválidos, valores inválidos, saldo, limite de frota, tempo de viagem, sucesso/falha de desembarque, devolução de tropas e eliminação.
+
+
+## Mapa geográfico — Alpha 0.4
+- Dados de terra: Natural Earth 1:110m (domínio público), arquivo original em data/land.geojson.
+- Fonte: https://github.com/nvkelso/natural-earth-vector/blob/master/geojson/ne_110m_land.geojson
+- Licença: https://www.naturalearthdata.com/about/terms-of-use/
+- Grade 240 × 100; 24.000 células totais e 7.124 terrestres. Versão anterior: 100 × 50.
+- Projeção equirretangular: longitudes -180 a 180, latitudes 85 a -65. Antártida excluída da área de jogo.
+- A projeção conserva o posicionamento, mas não é de áreas iguais; regiões polares ficam ampliadas.
+- Costas e ilhas obedecem à resolução da grade; ilhas menores que uma célula podem desaparecer.
+- Cores de deserto, vegetação e gelo são estilizadas; não são imagem de satélite nem dados de relevo.
+- Bots reposicionados por longitude/latitude. Enquadramento ajustado à proporção 2,4:1.
+- Cliente atualiza cores e símbolos apenas quando mudam. Desempenho em aparelhos reais ainda precisa ser medido.
+- Para regenerar os contornos: instale Pillow e rode python tools/generate_map.py; depois python tools/build_place.py.
+- Testes validam locais conhecidos de terra e oceano, dimensões e integridade da lógica terrestre/naval.
