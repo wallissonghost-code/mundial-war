@@ -22,7 +22,7 @@ starter,p=item(root,"StarterPlayer","StarterPlayer")
 scripts,p=item(starter,"StarterPlayerScripts","StarterPlayerScripts")
 client,p=item(scripts,"LocalScript","MundialWarClient")
 E.SubElement(p,"ProtectedString",name="Source").text=(root_dir/"src/client.client.lua").read_text()
-out=root_dir/"dist/Mundial_War_Alpha_0_4.rbxlx"
+out=root_dir/"dist/Mundial_War_Alpha_0_5.rbxlx"
 out.parent.mkdir(parents=True,exist_ok=True)
 E.ElementTree(root).write(out,encoding="utf-8",xml_declaration=True)
 parsed=E.parse(out)
@@ -30,4 +30,5 @@ for node,file in zip(parsed.findall(".//ProtectedString"),["server.server.lua","
     assert node.text==(root_dir/"src"/file).read_text()
 assert parsed.find(".//Item[@class='StarterPlayerScripts']/Item[@class='LocalScript']") is not None
 print(out)
+
 
