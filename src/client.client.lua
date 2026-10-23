@@ -15,18 +15,23 @@ local function make(class,parent,props)
  return obj
 end
 local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(10,20,34),BorderSizePixel=0})
-local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.3",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
+local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.4",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
 local status=make("TextLabel",bg,{Position=UDim2.fromOffset(8,36),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1,Text="Conectando…",TextColor3=Color3.new(1,1,1),TextSize=14,TextWrapped=true,Font=Enum.Font.Gotham})
 local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-200),BackgroundColor3=Color3.fromRGB(20,61,89),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
 local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,400)})
 local zoom,ratio,state=1,.25,nil
 local buttons={}
+local lastOwners={}
+local lastBuildings={}
+local neutralColors={}
 local mode=nil
 local buildButtons={}
 local function resize()
- local width=math.max(100,math.min(view.AbsoluteSize.X,view.AbsoluteSize.Y*2))*zoom
- map.Size=UDim2.fromOffset(width,width/2)
- view.CanvasSize=UDim2.fromOffset(width,width/2)
+ local aspect=state and state.w/state.h or 2.4
+ local width=math.max(100,math.min(view.AbsoluteSize.X,view.AbsoluteSize.Y*aspect))*zoom
+ map.Size=UDim2.fromOffset(width,width/aspect)
+ map.Position=UDim2.fromOffset(math.max(0,(view.AbsoluteSize.X-width)/2),math.max(0,(view.AbsoluteSize.Y-width/aspect)/2))
+ view.CanvasSize=UDim2.fromOffset(width,width/aspect)
 end
 view:GetPropertyChangedSignal("AbsoluteSize"):Connect(resize)
 local bar=make("Frame",bg,{Position=UDim2.new(0,8,1,-54),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1})
@@ -46,6 +51,27 @@ control("Parar",function() remote:FireServer("stop") end)
 control("−",function() zoom=math.max(1,zoom-.5) resize() end)
 control("+",function() zoom=math.min(5,zoom+.5) resize() end)
 control("Mapa",function() zoom=1 resize() view.CanvasPosition=Vector2.zero end)
+local function landColor(i,data)
+ if neutralColors[i] then return neutralColors[i] end
+ local x=(i-1)%data.w
+ local y=math.floor((i-1)/data.w)
+ local lat=85-(y+.5)*150/data.h
+ local lon=-180+(x+.5)*360/data.w
+ local base=Color3.fromRGB(116,143,102)
+ -- Stylized geographic palette, not satellite imagery or elevation data.
+ if lat>60 then base=Color3.fromRGB(195,209,200)
+ elseif (lat>15 and lat<32 and lon>-18 and lon<60) or (lat< -18 and lat> -32 and lon>115 and lon<145) then
+  base=Color3.fromRGB(193,174,121)
+ elseif math.abs(lat)<13 then base=Color3.fromRGB(83,126,91) end
+ local coast=false
+ if x>0 and data.cells[i-1]==-1 then coast=true end
+ if x<data.w-1 and data.cells[i+1]==-1 then coast=true end
+ if i>data.w and data.cells[i-data.w]==-1 then coast=true end
+ if i<=#data.cells-data.w and data.cells[i+data.w]==-1 then coast=true end
+ if coast then base=base:Lerp(Color3.fromRGB(214,210,161),.3) end
+ neutralColors[i]=base
+ return base
+end
 local function color(owner)
  if owner==0 then return Color3.fromRGB(165,174,145) end
  if owner==player.UserId then return Color3.fromRGB(74,200,141) end
@@ -89,11 +115,17 @@ remote.OnClientEvent:Connect(function(data)
     end)
     buttons[i]=b
    end
-   b.BackgroundColor3=color(owner)
+   if lastOwners[i]~=owner then
+    b.BackgroundColor3=owner==0 and landColor(i,data) or color(owner)
+    lastOwners[i]=owner
+   end
    local kind=data.buildings and data.buildings[tostring(i)]
-   b.Text=kind and data.types[kind].mark or ""
-   b.TextColor3=Color3.fromRGB(10,20,34)
-   b.TextScaled=true
+   if lastBuildings[i]~=(kind or false) then
+    b.Text=kind and data.types[kind].mark or ""
+    b.TextColor3=Color3.fromRGB(10,20,34)
+    b.TextScaled=true
+    lastBuildings[i]=kind or false
+   end
   end
  end
  for id,marker in pairs(shipMarkers) do
@@ -114,10 +146,11 @@ remote.OnClientEvent:Connect(function(data)
  elseif n and n.land<=0 then status.Text="Seu território foi conquistado. Entre em um novo servidor para jogar novamente."
  elseif n then
   status.Text=string.format("%s  |  Tropas: %d  |  Ouro: %d  |  Mundo: %.1f%%\nSelecione construção e toque em uma célula sua. Toque novamente no botão para voltar ao ataque.",n.name,n.troops,n.gold,n.land/data.total*100)
- else status.Text="Escolha uma célula bege para fundar sua nação. Verde será seu território.\nDepois, toque em terras vizinhas para expandir. Use + e − para zoom."
+ else status.Text="Escolha uma célula sem dono para fundar sua nação. Seu território terá verde vivo.\nDepois, toque em terras vizinhas para expandir. Use + e − para zoom."
  end
  local fleet=data.fleets and data.fleets[tostring(player.UserId)]
  if fleet and not data.winner then status.Text=status.Text.." | Frota: "..fleet.remaining.."s ("..fleet.troops.." tropas)" end
  resize()
 end)
 remote:FireServer("sync")
+
