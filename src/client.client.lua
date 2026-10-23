@@ -15,7 +15,7 @@ local function make(class,parent,props)
  return obj
 end
 local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(10,20,34),BorderSizePixel=0})
-local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.2",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
+local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.3",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
 local status=make("TextLabel",bg,{Position=UDim2.fromOffset(8,36),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1,Text="Conectando…",TextColor3=Color3.new(1,1,1),TextSize=14,TextWrapped=true,Font=Enum.Font.Gotham})
 local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-200),BackgroundColor3=Color3.fromRGB(20,61,89),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
 local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,400)})
@@ -53,17 +53,18 @@ local function color(owner)
 end
 local buildbar=make("Frame",bg,{Position=UDim2.new(0,8,1,-106),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1})
 make("UIListLayout",buildbar,{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center})
-for _,entry in ipairs({{"city","Cidade 500"},{"factory","Fábrica 700"},{"bunker","Bunker 400"}}) do
+for _,entry in ipairs({{"city","Cidade 500"},{"factory","Fábrica 700"},{"bunker","Bunker 400"},{"port","Porto 900"},{"naval","Invadir mar"}}) do
  local kind=entry[1]
- local b=make("TextButton",buildbar,{Size=UDim2.new(.32,0,1,0),Text=entry[2],TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(36,58,78),TextSize=12,TextWrapped=true,Font=Enum.Font.GothamBold})
+ local b=make("TextButton",buildbar,{Size=UDim2.new(.19,0,1,0),Text=entry[2],TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(36,58,78),TextSize=11,TextWrapped=true,Font=Enum.Font.GothamBold})
  buildButtons[kind]=b
  b.Activated:Connect(function()
   mode=mode==kind and nil or kind
   for key,button in pairs(buildButtons) do button.BackgroundColor3=key==mode and Color3.fromRGB(146,107,35) or Color3.fromRGB(36,58,78) end
  end)
 end
-local info=make("TextLabel",view,{Position=UDim2.fromOffset(8,8),Size=UDim2.new(1,-16,0,30),BackgroundColor3=Color3.fromRGB(10,20,34),BackgroundTransparency=.15,Text="",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true,Visible=false,ZIndex=4})
+local info=make("TextLabel",bg,{Position=UDim2.fromOffset(16,88),Size=UDim2.new(1,-16,0,30),BackgroundColor3=Color3.fromRGB(10,20,34),BackgroundTransparency=.15,Text="",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true,Visible=false,ZIndex=4})
 local noticeUntil=0
+local shipMarkers={}
 remote.OnClientEvent:Connect(function(data)
  if data.notice then
   info.Text=data.notice info.Visible=true noticeUntil=os.clock()+3
@@ -82,7 +83,8 @@ remote.OnClientEvent:Connect(function(data)
      local nation=state.nations[tostring(owner)]
      info.Text=nation and string.format("%s • %d tropas • %d células",nation.name,nation.troops,nation.land) or "Território livre"
      info.Visible=true noticeUntil=os.clock()+3
-     if mode then remote:FireServer("build",index,mode)
+     if mode=="naval" then remote:FireServer("naval",index,ratio)
+     elseif mode then remote:FireServer("build",index,mode)
      else remote:FireServer("attack",index,ratio) end
     end)
     buttons[i]=b
@@ -94,6 +96,19 @@ remote.OnClientEvent:Connect(function(data)
    b.TextScaled=true
   end
  end
+ for id,marker in pairs(shipMarkers) do
+  if not (data.fleets and data.fleets[id]) then marker:Destroy() shipMarkers[id]=nil end
+ end
+ for id,f in pairs(data.fleets or {}) do
+  local marker=shipMarkers[id]
+  if not marker then
+   marker=make("TextLabel",map,{Size=UDim2.fromOffset(18,18),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=color(tonumber(id)),Text="▲",TextColor3=Color3.new(1,1,1),TextSize=14,ZIndex=3})
+   shipMarkers[id]=marker
+  end
+  local progress=1-f.remaining/f.duration
+  local cell=f.route[math.min(#f.route,1+math.floor(progress*(#f.route-1)))]
+  marker.Position=UDim2.fromScale(((cell-1)%data.w+.5)/data.w,(math.floor((cell-1)/data.w)+.5)/data.h)
+ end
  local n=data.nations[player.UserId] or data.nations[tostring(player.UserId)]
  if data.winner then status.Text="VITÓRIA: "..data.winner.." • 80% do mundo conquistado"
  elseif n and n.land<=0 then status.Text="Seu território foi conquistado. Entre em um novo servidor para jogar novamente."
@@ -101,6 +116,8 @@ remote.OnClientEvent:Connect(function(data)
   status.Text=string.format("%s  |  Tropas: %d  |  Ouro: %d  |  Mundo: %.1f%%\nSelecione construção e toque em uma célula sua. Toque novamente no botão para voltar ao ataque.",n.name,n.troops,n.gold,n.land/data.total*100)
  else status.Text="Escolha uma célula bege para fundar sua nação. Verde será seu território.\nDepois, toque em terras vizinhas para expandir. Use + e − para zoom."
  end
+ local fleet=data.fleets and data.fleets[tostring(player.UserId)]
+ if fleet and not data.winner then status.Text=status.Text.." | Frota: "..fleet.remaining.."s ("..fleet.troops.." tropas)" end
  resize()
 end)
 remote:FireServer("sync")
