@@ -27,7 +27,7 @@ for file in (root / "src").glob("*.lua"):
 source = (root / "src/server.server.lua").read_text()
 core = source[source.index("local W,H"):source.index("local winner=nil")]
 check(core + r'''
-assert(#cells==5000)
+assert(#cells==W*H)
 local bots=0
 for _,n in pairs(nations) do bots=bots+1 end
 assert(bots==6)
@@ -169,4 +169,21 @@ n.land=0
 advanceFleets()
 assert(not fleets[101] and cells[target]==0)
 print("PASS: coastal ports, sea routes, resources, travel time, landing, failure and elimination")
+''', True)
+
+
+check(core + r'''
+local function at(lon,lat)
+ local x=math.floor((lon+180)/360*W)+1
+ local y=math.floor((85-lat)/150*H)+1
+ return cells[(y-1)*W+x]
+end
+for _,p in ipairs({{-55,-10},{20,0},{135,-25},{-100,40},{25,50},{47,-19}}) do
+ assert(at(p[1],p[2])~=-1,"Known land location")
+end
+for _,p in ipairs({{-30,0},{-140,0},{80,-30}}) do
+ assert(at(p[1],p[2])==-1,"Known ocean location")
+end
+assert(W==240 and H==100 and total>6500 and total<8000)
+print("PASS: map dimensions, land area and geographic land/ocean reference points")
 ''', True)
