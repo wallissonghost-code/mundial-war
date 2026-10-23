@@ -1,4 +1,4 @@
--- Mundial War 0.1: authoritative territory simulation.
+-- Mundial War 0.2: authoritative territory simulation.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local remote = Instance.new("RemoteEvent")
@@ -28,6 +28,31 @@ local function inside(x,y,p)
  return hit
 end
 local cells, nations, cooldown = {},{},{}
+local buildings={}
+local types={
+ city={cost=500,troops=30,cap=2000,gold=0,mark="C"},
+ factory={cost=700,troops=0,cap=0,gold=35,mark="F"},
+ bunker={cost=400,troops=0,cap=0,gold=0,mark="B"},
+}
+local function build(id,i,kind)
+ local rule=types[kind]
+ local n=nations[id]
+ if not rule or not n or n.land<=0 or cells[i]~=id or buildings[i] then return false end
+ if n.gold<rule.cost then return false end
+ n.gold=n.gold-rule.cost
+ buildings[i]=kind
+ return true
+end
+local function bonuses(id)
+ local troops,cap,gold=0,0,0
+ for i,kind in pairs(buildings) do
+  if cells[i]==id then
+   local t=types[kind]
+   troops=troops+t.troops cap=cap+t.cap gold=gold+t.gold
+  end
+ end
+ return troops,cap,gold
+end
 local total=0
 for y=1,H do for x=1,W do
  local land=false
@@ -63,8 +88,9 @@ local function frontier(id,target)
 end
 local function step(id,n)
  if n.land<=0 then n.target=nil return end
- n.troops=math.min(n.troops+85+n.land*2,5000+n.land*250)
- n.gold=n.gold+5+n.land
+ local extra,cap,income=bonuses(id)
+ n.troops=math.min(n.troops+85+n.land*2+extra,5000+n.land*250+cap)
+ n.gold=n.gold+5+n.land+income
  if n.target==nil then return end
  local border=frontier(id,n.target)
  if #border==0 then n.target=nil return end
@@ -75,6 +101,7 @@ local function step(id,n)
   local i=table.remove(border,index)
   local defender=nations[cells[i]]
   local cost=defender and math.max(35,math.ceil(defender.troops/math.max(1,defender.land))) or 20
+  if buildings[i]=="bunker" then cost=cost*2 end
   if used+cost>budget then break end
   used=used+cost
   if defender then
@@ -90,7 +117,12 @@ local seeds={{"Aurora",18,12},{"Andes",29,32},{"Atlas",50,22},{"Boreal",60,12},{
 for k,s in ipairs(seeds) do spawn(-k-1,s[1],(s[3]-1)*W+s[2]) end
 local winner=nil
 local function snapshot(p)
- local data={w=W,h=H,cells=cells,nations=nations,total=total,winner=winner}
+ -- String dictionary keys avoid sparse/negative numeric remote table keys.
+ local public={}
+ for id,n in pairs(nations) do public[tostring(id)]=n end
+ local structures={}
+ for i,kind in pairs(buildings) do structures[tostring(i)]=kind end
+ local data={w=W,h=H,cells=cells,nations=public,buildings=structures,types=types,total=total,winner=winner}
  if p then remote:FireClient(p,data) else remote:FireAllClients(data) end
 end
 remote.OnServerEvent:Connect(function(p,action,i,ratio)
@@ -105,8 +137,11 @@ remote.OnServerEvent:Connect(function(p,action,i,ratio)
  end
  if type(i)~="number" or i~=i or i%1~=0 or i<1 or i>#cells then return end
  local n=nations[p.UserId]
- if not n then spawn(p.UserId,p.DisplayName,i)
- elseif action=="attack" and cells[i]~=-1 and cells[i]~=p.UserId then
+ if action=="build" then
+  local ok=type(ratio)=="string" and build(p.UserId,i,ratio)
+  remote:FireClient(p,{notice=ok and "Construção pronta!" or "Construa em uma célula sua, vazia e com ouro suficiente."})
+ elseif not n and action=="attack" then spawn(p.UserId,p.DisplayName,i)
+ elseif n and action=="attack" and cells[i]~=-1 and cells[i]~=p.UserId then
   if type(ratio)~="number" or ratio~=ratio then return end
   if #frontier(p.UserId,cells[i])>0 then n.target=cells[i] n.ratio=math.clamp(ratio,.1,1) end
  end
@@ -115,12 +150,20 @@ end)
 Players.PlayerRemoving:Connect(function(p)
  nations[p.UserId]=nil
  cooldown[p.UserId]=nil
- for i,id in ipairs(cells) do if id==p.UserId then cells[i]=0 end end
+ for i,id in ipairs(cells) do if id==p.UserId then cells[i]=0 buildings[i]=nil end end
 end)
 while task.wait(1) do
  if not winner then
   for id,n in pairs(nations) do
    if id<0 and n.land>0 then
+    if n.gold>=700 and math.random()<.25 then
+     local available={}
+     for i,owner in ipairs(cells) do if owner==id and not buildings[i] then table.insert(available,i) end end
+     if #available>0 then
+      local kinds={"city","factory","bunker"}
+      build(id,available[math.random(#available)],kinds[math.random(3)])
+     end
+    end
     if #frontier(id,0)>0 then n.target=0
     elseif math.random()<.3 then
      local targets={}
