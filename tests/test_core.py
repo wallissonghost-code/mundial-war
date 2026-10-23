@@ -97,3 +97,76 @@ for id,m in pairs(nations) do
 end
 print("PASS: spawn, expansion, costs, city, factory, bunker, capture and land accounting")
 ''', True)
+
+check(core + r'''
+-- Controlled two-island map tests transport independently of continent art.
+for i=1,#cells do cells[i]=-1 end
+for k in pairs(nations) do nations[k]=nil end
+for k in pairs(buildings) do buildings[k]=nil end
+for k in pairs(coastal) do coastal[k]=nil end
+local origin,target=1910,1980
+cells[origin]=0 cells[target]=0
+coastal[origin]=true coastal[target]=true
+assert(spawn(101,"Sailor",origin))
+local n=nations[101]
+n.gold=3000 n.troops=2000
+assert(not embark(101,target,.5),"Requires port")
+local gold=n.gold
+coastal[origin]=nil
+assert(not build(101,origin,"port"),"Inland port rejected")
+coastal[origin]=true
+assert(build(101,origin,"port"))
+assert(n.gold==gold-900)
+assert(not embark(101,target,0/0),"NaN rejected")
+assert(not embark(101,target,2),"Invalid percent rejected")
+assert(not embark(101,origin,.5),"Own target rejected")
+assert(not embark(101,1,.5),"Water target rejected")
+local route=seaRoute(101,target)
+assert(route and route[#route]==target)
+for i=1,#route-1 do
+ assert(cells[route[i]]==-1,"Route crosses water only")
+ if i>1 then
+  local adjacent=false
+  for _,j in ipairs(neighbors(route[i-1])) do if j==route[i] then adjacent=true end end
+  assert(adjacent,"Continuous route")
+ end
+end
+n.gold=249
+assert(not embark(101,target,.5),"Insufficient gold rejected")
+n.gold=1000 n.troops=100
+assert(not embark(101,target,.5),"Minimum expedition troops")
+n.troops=2000
+assert(embark(101,target,.5))
+assert(n.gold==750 and n.troops==1000,"Deduct once at launch")
+assert(not embark(101,target,.5),"One active fleet")
+local duration=fleets[101].duration
+assert(duration>=3)
+for i=1,duration-1 do advanceFleets() assert(cells[target]==0) end
+advanceFleets()
+assert(cells[target]==101 and n.land==2 and n.troops==1930)
+assert(not fleets[101])
+-- An inaccessible inland target cannot be reached.
+local inland=2050
+cells[inland]=0
+assert(not seaRoute(101,inland))
+-- Failed landing damages a defender without changing land ownership.
+cells[target]=202 n.land=1
+nations[202]={name="Defender",troops=1000,land=1,gold=0}
+n.troops=400 n.gold=1000
+assert(embark(101,target,.5))
+for i=1,fleets[101].duration do advanceFleets() end
+assert(cells[target]==202 and nations[202].troops==900 and n.land==1)
+-- If allies' own troops already captured the destination, troops return.
+n.troops=1000 n.gold=1000
+assert(embark(101,target,.5))
+cells[target]=101 n.land=2 nations[202].land=0
+for i=1,fleets[101].duration do advanceFleets() end
+assert(n.troops==1000)
+-- Elimination cancels the fleet.
+cells[target]=0 n.land=1 n.gold=1000
+assert(embark(101,target,.5))
+n.land=0
+advanceFleets()
+assert(not fleets[101] and cells[target]==0)
+print("PASS: coastal ports, sea routes, resources, travel time, landing, failure and elimination")
+''', True)
