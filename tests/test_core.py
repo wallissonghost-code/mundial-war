@@ -173,17 +173,15 @@ print("PASS: coastal ports, sea routes, resources, travel time, landing, failure
 
 
 check(core + r'''
-local function at(lon,lat)
- local x=math.floor((lon+180)/360*W)+1
- local y=math.floor((85-lat)/150*H)+1
- return cells[(y-1)*W+x]
+local function at(x,y)
+ return cells[math.floor(y*H)*W+math.floor(x*W)+1]
 end
-for _,p in ipairs({{-55,-10},{20,0},{135,-25},{-100,40},{25,50},{47,-19}}) do
- assert(at(p[1],p[2])~=-1,"Known land location")
+for _,p in ipairs({{.28,.60},{.52,.50},{.82,.73},{.18,.20},{.77,.30},{.50,.97}}) do
+ assert(at(p[1],p[2])~=-1,"Reference land sample")
 end
-for _,p in ipairs({{-30,0},{-140,0},{80,-30}}) do
- assert(at(p[1],p[2])==-1,"Known ocean location")
+for _,p in ipairs({{.40,.65},{.08,.65},{.68,.75}}) do
+ assert(at(p[1],p[2])==-1,"Reference ocean sample")
 end
-assert(W==240 and H==100 and total>6500 and total<8000)
-print("PASS: map dimensions, land area and geographic land/ocean reference points")
+assert(W==320 and H==180 and total>20000 and total<22000)
+print("PASS: reference silhouette, land/ocean samples, Antarctica and large map dimensions")
 ''', True)
