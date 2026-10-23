@@ -15,9 +15,9 @@ local function make(class,parent,props)
  return obj
 end
 local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(10,20,34),BorderSizePixel=0})
-local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.4",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
+local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,36),BackgroundTransparency=1,Text="MUNDIAL WAR • ALPHA 0.5",TextColor3=Color3.fromRGB(230,196,112),TextSize=19,Font=Enum.Font.GothamBold})
 local status=make("TextLabel",bg,{Position=UDim2.fromOffset(8,36),Size=UDim2.new(1,-16,0,46),BackgroundTransparency=1,Text="Conectando…",TextColor3=Color3.new(1,1,1),TextSize=14,TextWrapped=true,Font=Enum.Font.Gotham})
-local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-200),BackgroundColor3=Color3.fromRGB(20,61,89),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
+local view=make("ScrollingFrame",bg,{Position=UDim2.new(0,8,0,86),Size=UDim2.new(1,-16,1,-200),BackgroundColor3=Color3.fromRGB(23,65,94),BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
 local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,400)})
 local zoom,ratio,state=1,.25,nil
 local buttons={}
@@ -27,7 +27,7 @@ local neutralColors={}
 local mode=nil
 local buildButtons={}
 local function resize()
- local aspect=state and state.w/state.h or 2.4
+ local aspect=state and state.w/state.h or (16/9)
  local width=math.max(100,math.min(view.AbsoluteSize.X,view.AbsoluteSize.Y*aspect))*zoom
  map.Size=UDim2.fromOffset(width,width/aspect)
  map.Position=UDim2.fromOffset(math.max(0,(view.AbsoluteSize.X-width)/2),math.max(0,(view.AbsoluteSize.Y-width/aspect)/2))
@@ -49,31 +49,80 @@ control("25%",function(b)
 end)
 control("Parar",function() remote:FireServer("stop") end)
 control("−",function() zoom=math.max(1,zoom-.5) resize() end)
-control("+",function() zoom=math.min(5,zoom+.5) resize() end)
+control("+",function() zoom=math.min(10,zoom+.5) resize() end)
 control("Mapa",function() zoom=1 resize() view.CanvasPosition=Vector2.zero end)
 local function landColor(i,data)
- if neutralColors[i] then return neutralColors[i] end
+ return Color3.fromRGB(215,215,215)
+end
+-- Decorative game regions, not official national borders.
+local regions=nil
+local function prepareRegions(data)
+ local seeds={}
+ for by=0,data.h-1,11 do
+  for bx=0,data.w-1,12 do
+   local tx=bx+6+((bx*17+by*31)%5-2)
+   local ty=by+5+((bx*7+by*13)%5-2)
+   local best,dist=nil,math.huge
+   for y=by,math.min(by+10,data.h-1) do
+    for x=bx,math.min(bx+11,data.w-1) do
+     local i=y*data.w+x+1
+     if data.cells[i]~=-1 then
+      local d=(x-tx)^2+(y-ty)^2
+      if d<dist then best={x,y} dist=d end
+     end
+    end
+   end
+   if best then table.insert(seeds,best) end
+  end
+ end
+ regions={}
+ for i,owner in ipairs(data.cells) do
+  if owner~=-1 then
+   local x=(i-1)%data.w
+   local y=math.floor((i-1)/data.w)
+   local best,dist=0,math.huge
+   for k,p in ipairs(seeds) do
+    local d=(x-p[1])^2+(y-p[2])^2
+    if d<dist then best=k dist=d end
+   end
+   regions[i]=best
+   if i%1000==0 then task.wait() end
+  end
+ end
+ -- Blue shallows plus sparse ocean texture; ocean never becomes conquerable.
+ for i,owner in ipairs(data.cells) do
+  if owner==-1 then
+   local x=(i-1)%data.w
+   local y=math.floor((i-1)/data.w)
+   local distance=4
+   for dy=-2,2 do for dx=-2,2 do
+    local xx,yy=x+dx,y+dy
+    if xx>=0 and xx<data.w and yy>=0 and yy<data.h and data.cells[yy*data.w+xx+1]~=-1 then
+     distance=math.min(distance,math.max(math.abs(dx),math.abs(dy)))
+    end
+   end end
+   if distance<=2 or (x*17+y*29)%47==0 then
+    local c=distance==1 and Color3.fromRGB(35,97,137) or distance==2 and Color3.fromRGB(29,81,115) or Color3.fromRGB(26,73,103)
+    make("Frame",map,{Position=UDim2.fromScale(x/data.w,y/data.h),Size=UDim2.fromScale(1/data.w,1/data.h),BorderSizePixel=0,BackgroundColor3=c,Active=false})
+   end
+  end
+ end
+end
+local function decorateCell(b,i,data)
  local x=(i-1)%data.w
  local y=math.floor((i-1)/data.w)
- local lat=85-(y+.5)*150/data.h
- local lon=-180+(x+.5)*360/data.w
- local base=Color3.fromRGB(116,143,102)
- -- Stylized geographic palette, not satellite imagery or elevation data.
- if lat>60 then base=Color3.fromRGB(195,209,200)
- elseif (lat>15 and lat<32 and lon>-18 and lon<60) or (lat< -18 and lat> -32 and lon>115 and lon<145) then
-  base=Color3.fromRGB(193,174,121)
- elseif math.abs(lat)<13 then base=Color3.fromRGB(83,126,91) end
- local coast=false
- if x>0 and data.cells[i-1]==-1 then coast=true end
- if x<data.w-1 and data.cells[i+1]==-1 then coast=true end
- if i>data.w and data.cells[i-data.w]==-1 then coast=true end
- if i<=#data.cells-data.w and data.cells[i+data.w]==-1 then coast=true end
- if coast then base=base:Lerp(Color3.fromRGB(214,210,161),.3) end
- neutralColors[i]=base
- return base
+ local edges={
+  {x==0 or regions[i-1]~=regions[i],0,0,.15,1},
+  {x==data.w-1 or regions[i+1]~=regions[i],.85,0,.15,1},
+  {y==0 or regions[i-data.w]~=regions[i],0,0,1,.15},
+  {y==data.h-1 or regions[i+data.w]~=regions[i],0,.85,1,.15},
+ }
+ for _,e in ipairs(edges) do
+  if e[1] then make("Frame",b,{Position=UDim2.fromScale(e[2],e[3]),Size=UDim2.fromScale(e[4],e[5]),BackgroundColor3=Color3.fromRGB(32,35,38),BorderSizePixel=0,Active=false}) end
+ end
 end
 local function color(owner)
- if owner==0 then return Color3.fromRGB(165,174,145) end
+ if owner==0 then return Color3.fromRGB(215,215,215) end
  if owner==player.UserId then return Color3.fromRGB(74,200,141) end
  return Color3.fromHSV((math.abs(owner)*.173)%1,.55,.85)
 end
@@ -91,13 +140,14 @@ end
 local info=make("TextLabel",bg,{Position=UDim2.fromOffset(16,88),Size=UDim2.new(1,-16,0,30),BackgroundColor3=Color3.fromRGB(10,20,34),BackgroundTransparency=.15,Text="",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true,Visible=false,ZIndex=4})
 local noticeUntil=0
 local shipMarkers={}
-remote.OnClientEvent:Connect(function(data)
+local function renderSnapshot(data)
  if data.notice then
   info.Text=data.notice info.Visible=true noticeUntil=os.clock()+3
   return
  end
  if os.clock()>noticeUntil then info.Visible=false end
  state=data
+ if not regions then prepareRegions(data) end
  for i,owner in ipairs(data.cells) do
   if owner~=-1 then
    local b=buttons[i]
@@ -113,7 +163,9 @@ remote.OnClientEvent:Connect(function(data)
      elseif mode then remote:FireServer("build",index,mode)
      else remote:FireServer("attack",index,ratio) end
     end)
+    decorateCell(b,i,data)
     buttons[i]=b
+    if i%300==0 then task.wait() end
    end
    if lastOwners[i]~=owner then
     b.BackgroundColor3=owner==0 and landColor(i,data) or color(owner)
@@ -151,6 +203,24 @@ remote.OnClientEvent:Connect(function(data)
  local fleet=data.fleets and data.fleets[tostring(player.UserId)]
  if fleet and not data.winner then status.Text=status.Text.." | Frota: "..fleet.remaining.."s ("..fleet.troops.." tropas)" end
  resize()
+end
+-- Coalesce snapshots while the large map is being initialized across frames.
+local rendering=false
+local pending=nil
+remote.OnClientEvent:Connect(function(data)
+ if data.notice then
+  info.Text=data.notice info.Visible=true noticeUntil=os.clock()+3
+  return
+ end
+ pending=data
+ if rendering then return end
+ rendering=true
+ while pending do
+  local latest=pending pending=nil
+  renderSnapshot(latest)
+ end
+ rendering=false
 end)
 remote:FireServer("sync")
+
 
