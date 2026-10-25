@@ -40,7 +40,7 @@ local function claim(id,i)
 end
 local function spawn(id,name,i)
  if cells[i]~=0 or nations[id] then return false end
- nations[id]={name=name,troops=id>0 and 2500 or 1500,gold=0,land=0,ratio=.25,anchor=i,front=i,status="Aguardando",spent=0}
+ nations[id]={name=name,troops=id>0 and 2500 or 1500,gold=0,land=0,ratio=.25,anchor=i,front=i,status="Aguardando",spent=0,deployed=0}
  owned[id]={} edges[id]={}
  claim(id,i)
  return true
@@ -52,10 +52,14 @@ local function relation(a,b)
  if r.untilTime and r.untilTime<=clock then relations[pair(a,b)]=nil return "neutral" end
  return r.kind
 end
+local function finish(n,status)
+ if n.land>0 then n.troops=n.troops+(n.deployed or 0) end
+ n.deployed=0 n.target=nil n.status=status
+end
 local function stopPair(a,b,kind)
  relations[pair(a,b)]={kind=kind,untilTime=clock+(kind=="ally" and 180 or 90)}
  for _,id in ipairs({a,b}) do local n=nations[id]
-  if n and n.target==(id==a and b or a) then n.target=nil n.status="Tratado ativo" end
+  if n and n.target==(id==a and b or a) then finish(n,"Tratado ativo") end
  end
 end
 local function diplomacy(a,b,kind)
@@ -100,6 +104,11 @@ local function order(id,i,ratio)
  if target~=0 and relation(id,target)~="war" then return false,"Declare guerra antes de atacar. Alianças e tréguas impedem ataques." end
  local f=frontier(id,target)
  if #f==0 then return false,"Sem fronteira terrestre. Construa um porto para cruzar o mar." end
+ if n.target~=target or (n.deployed or 0)<=0 then
+  finish(n,"Preparando") local sent=math.floor(n.troops*ratio)
+  if sent<5 then return false,"Precisa de ao menos 5 tropas selecionadas." end
+  n.troops=n.troops-sent n.deployed=sent
+ end
  n.target=target n.anchor=i n.ratio=ratio n.status=target==0 and "Expandindo" or "Atacando"
  return true,"Avanço iniciado na direção selecionada."
 end
@@ -126,16 +135,16 @@ local function defense(i)
 end
 local function step(id,n,dt)
  dt=dt or .25
- if n.land<=0 then n.target=nil n.status="Eliminado" return end
+ if n.land<=0 then n.deployed=0 n.target=nil n.status="Eliminado" return end
  local t,c,g=bonuses(id)
- n.troops=math.min(n.troops+(85+n.land*2+t)*dt,5000+n.land*250+c)
+ n.troops=math.min(n.troops+(85+n.land*2+t)*dt,math.max(0,5000+n.land*250+c-(n.deployed or 0)))
  n.gold=n.gold+(5+n.land+g)*dt n.spent=0
  if n.target==nil then return end
- if n.target~=0 and relation(id,n.target)~="war" then n.target=nil n.status="Ataque encerrado por tratado" return end
+ if n.target~=0 and relation(id,n.target)~="war" then finish(n,"Ataque encerrado por tratado") return end
  local candidates=frontier(id,n.target)
- if #candidates==0 then n.target=nil n.status="Sem terra acessível; use um porto" return end
+ if #candidates==0 then finish(n,"Sem terra acessível; use um porto") return end
  table.sort(candidates,function(a,b)return distance(a,n.anchor)<distance(b,n.anchor)end)
- local budget=math.floor(n.troops*n.ratio)
+ local budget=n.deployed or 0
  local limit=math.min(12,4+math.floor(math.sqrt(n.land)/2))
  local taken=0
  local seen={} for _,i in ipairs(candidates) do seen[i]=true end
@@ -152,7 +161,8 @@ local function step(id,n,dt)
    end
   end
  end
- n.troops=math.max(0,n.troops-n.spent)
+ n.deployed=math.max(0,n.deployed-n.spent)
+ if n.deployed<5 then finish(n,"Expedição concluída; envie novas tropas") return end
  n.status=taken>0 and (n.target==0 and "Expandindo" or "Atacando") or "Aguardando tropas; aumente o percentual"
 end
 local function seaRoute(id,target)
@@ -217,7 +227,8 @@ local function seedBots()
   local target=math.floor(s[3]*H)*W+math.floor(s[2]*W)+1
   local best,dist=nil,math.huge
   for i,v in ipairs(cells) do if v==0 then local d=distance(i,target)
-   if d<dist then best=i dist=d end
+   local spaced=true for _,n in pairs(nations) do if distance(i,n.anchor)<196 then spaced=false break end end
+   if spaced and d<dist then best=i dist=d end
   end end
   if best then spawn(-k-1,s[1],best) end
  end

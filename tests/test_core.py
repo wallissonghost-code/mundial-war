@@ -36,9 +36,10 @@ local n=nations[101]
 assert(order(101,431,.25))
 local before=n.troops
 step(101,n)
-assert(n.land>1 and n.troops==before+87*.25-(n.land-1)*5)
+assert(n.land>1 and n.troops==before+87*.25)
+assert(n.deployed==625-(n.land-1)*5)
 for k=1,39 do step(101,n) end
-assert(n.land>150,"Expansion should advance visibly")
+assert(n.land==126,"Expansion should advance visibly")
 n.target=nil n.gold=500
 assert(build(101,401,"city"))
 assert(n.gold==0 and not build(101,401,"factory"))
@@ -50,13 +51,13 @@ resetRound()
 assert(spawn(101,"Test",401) and spawn(-2,"Enemy",402))
 claim(-2,441) nations[-2].troops=0 nations[-2].gold=400
 assert(build(-2,402,"bunker"))
-n=nations[101] n.troops=10
+n=nations[101] n.troops=30
 assert(not order(101,402,1))
 assert(diplomacy(101,-2,"war") and order(101,402,1))
 step(101,n)
 assert(cells[402]==-2 and cells[441]==101,"Expensive candidate must not block cheap candidate")
 assert(defense(402)==50)
-n.troops=1000
+n.troops=3000
 assert(diplomacy(101,-2,"truce"))
 assert(n.target==nil and cells[441]==101)
 assert(not diplomacy(101,-2,"war") and not order(101,402,1))
@@ -101,6 +102,15 @@ assert(order(101,frontier(101,0)[1],.25))
 for k=1,240 do tick(.25) end
 local counts={} for _,id in ipairs(cells) do counts[id]=(counts[id] or 0)+1 end
 for id,n in pairs(nations) do assert(n.land==(counts[id] or 0) and n.troops>=0 and n.gold>=0) end
-assert(nations[101].land>150)
+assert(nations[101].land>=126)
 print("PASS: Lua real map 60-second simulation and accounting")
+''',True)
+
+check(core(['1'*40]*20)+r'''
+assert(spawn(101,"Reserve",401)) local n=nations[101]
+assert(order(101,402,.25)) assert(n.troops==1875 and n.deployed==625)
+step(101,n) local before=n.troops+n.deployed
+finish(n,"Parado") assert(n.troops==before and n.deployed==0)
+finish(n,"Parado") assert(n.troops==before)
+print("PASS: Lua expedition launch debit and refund exactly once")
 ''',True)

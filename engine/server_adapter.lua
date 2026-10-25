@@ -10,7 +10,7 @@ local function snapshot(p,full)
  local function send(player)
   local initial=full or known[player.UserId]~=round
   local data={round=round,you=playerId(player),w=W,h=H,nations=public,buildings=structures,fleets=ships,types=types,total=total,winner=winner,time=clock,relations=relations,offers=offers[tostring(playerId(player))] or offers[playerId(player)],delta=delta}
-  if initial then data.cells=cells data.regionRows=regionRows known[player.UserId]=round end
+  if initial then data.cells=cells data.regionRows=regionRows data.terrainRows=terrainRows known[player.UserId]=round end
   remote:FireClient(player,data)
  end
  if p then send(p) else for _,player in ipairs(Players:GetPlayers()) do send(player) end changed={} end
@@ -30,12 +30,13 @@ remote.OnServerEvent:Connect(function(p,action,i,value)
  end
  if winner then return end
  local n=nations[id]
- if action=="stop" then if n then n.target=nil n.status="Parado" end snapshot(nil) return end
+ if action=="stop" then if n then finish(n,"Parado; sobreviventes retornaram") end snapshot(nil) return end
  if type(i)~="number" or i~=i or i%1~=0 or i<1 or i>#cells then return end
  local ok,message=false,"Ação inválida."
  if action=="attack" then
   if not n then
    ok=spawn(id,p.DisplayName,i)
+   if ok then nations[id].userId=p.UserId end
    if ok and not started then seedBots() started=true end
    message=ok and "Nação fundada." or "Escolha uma terra livre."
   else ok,message=order(id,i,value) end
