@@ -1,4 +1,4 @@
--- Mundial War 0.7: pooled row renderer, selection, icons and operation labels.
+-- Mundial War 0.7.1: pooled row renderer, selection, icons and operation labels.
 local Players=game:GetService("Players")
 local UIS=game:GetService("UserInputService")
 local RS=game:GetService("ReplicatedStorage")
@@ -15,7 +15,7 @@ local bg=make("Frame",gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fro
 local dock=make("Frame",bg,{AnchorPoint=Vector2.new(.5,1),Position=UDim2.new(.5,0,1,-8),Size=UDim2.new(.94,0,0,210),BackgroundColor3=Color3.fromRGB(20,28,54),BackgroundTransparency=.06,BorderSizePixel=0,ZIndex=7})
 make("UICorner",dock,{CornerRadius=UDim.new(0,10)})
 make("UISizeConstraint",dock,{MaxSize=Vector2.new(1000,230)})
-local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,27),BackgroundTransparency=1,Text="MUNDIAL WAR · 0.7",TextColor3=Color3.fromRGB(235,210,155),TextSize=17,Font=Enum.Font.GothamBold})
+local title=make("TextLabel",bg,{Size=UDim2.new(1,0,0,27),BackgroundTransparency=1,Text="MUNDIAL WAR · 0.7.1",TextColor3=Color3.fromRGB(235,210,155),TextSize=17,Font=Enum.Font.GothamBold})
 local status=make("TextLabel",dock,{Position=UDim2.fromOffset(6,5),Size=UDim2.new(1,-12,0,45),BackgroundTransparency=1,Text="Carregando mapa…",TextColor3=Color3.new(1,1,1),TextSize=12,TextWrapped=true})
 local view=make("ScrollingFrame",bg,{Position=UDim2.fromOffset(6,32),Size=UDim2.new(1,-12,1,-38),BackgroundColor3=Color3.fromRGB(53,132,176),BorderSizePixel=0,ScrollBarThickness=4,CanvasSize=UDim2.fromOffset(0,0),ScrollingDirection=Enum.ScrollingDirection.XY})
 local map=make("Frame",view,{BackgroundTransparency=1,Size=UDim2.fromOffset(800,450)})
@@ -62,7 +62,7 @@ local function send(action)
  if not selected then message("Selecione uma célula no mapa primeiro.") return end
  remote:FireServer(action,selected,ratio)
 end
-bar(-120,{{"Avançar",function() mode=nil send("attack") end},{"25%",function(b) local values={.1,.25,.5,.75,1} ratio=values[table.find(values,ratio)%5+1] b.Text=math.floor(ratio*100).."%" end},{"Parar",function() remote:FireServer("stop") end},{"−",function() zoom=math.max(1,zoom/1.4) resize() end},{"+",function() zoom=math.min(10,zoom*1.4) resize() end},{"Mapa",function() zoom=1 resize() view.CanvasPosition=Vector2.zero end},{"Reiniciar",function() remote:FireServer("restart") end}})
+bar(-120,{{"25%",function(b) local values={.1,.25,.5,.75,1} ratio=values[table.find(values,ratio)%5+1] b.Text=math.floor(ratio*100).."%" end},{"Parar",function() remote:FireServer("stop") end},{"−",function() zoom=math.max(1,zoom/1.4) resize() end},{"+",function() zoom=math.min(10,zoom*1.4) resize() end},{"Mapa",function() zoom=1 resize() view.CanvasPosition=Vector2.zero end},{"Reiniciar",function() remote:FireServer("restart") end}})
 local entries={}
 for _,e in ipairs({{"city","▥ Cidade 500"},{"factory","⚙ Fábrica 700"},{"bunker","◆ Bunker 400"},{"port","⚓ Porto 900"},{"naval","⛵ Invadir"}}) do
  local kind=e[1]
@@ -92,7 +92,7 @@ local function selectedInfo()
   else text=text.." · Neutro" end
  end
  if structure then text=text.." · "..state.types[structure].name.." ("..state.types[structure].description..")" end
- selection.Text=text.." · Avançar para confirmar"
+ selection.Text=text.." · Clique no destino para avançar"
  marker.Visible=true
  marker.Position=UDim2.fromScale(((selected-1)%state.w+.5)/state.w,(math.floor((selected-1)/state.w)+.5)/state.h)
 end
@@ -107,7 +107,8 @@ local function pick(p)
  selected=i selectedInfo()
  if not state.nations[tostring(state.you)] then remote:FireServer("attack",i,ratio)
  elseif mode=="naval" then remote:FireServer("naval",i,ratio)
- elseif mode then remote:FireServer("build",i,mode) end
+ elseif mode then remote:FireServer("build",i,mode)
+ elseif cells[i]~=state.you then remote:FireServer("attack",i,ratio) end
 end
 local function within(p)
  if p.Y>=dock.AbsolutePosition.Y then return false end

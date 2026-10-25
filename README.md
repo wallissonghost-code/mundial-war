@@ -1,12 +1,16 @@
-# Mundial War — Alpha 0.7
+# Mundial War — Alpha 0.7.1
 
 Jogo de conquista territorial para Ghost, em duas versões: Roblox e HTML offline. O HTML é uma partida individual independente, sem conexão com Roblox.
 
 ## Abrir
 
-- **Roblox:** abra `dist/Mundial_War_Alpha_0_7.rbxlx` no Studio e inicie Jogar. O arquivo contém os dois scripts, sem depender do place 95206881. Publicação no Roblox continua sendo feita pelo proprietário no Studio.
-- **HTML:** baixe `dist/Mundial_War_HTML_0_7.html` e abra em um navegador. Não exige instalação, servidor ou recursos externos. Também há a versão atual em `web/Mundial_War_HTML.html`.
+- **Roblox:** abra `dist/Mundial_War_Alpha_0_7_1.rbxlx` no Studio e inicie Jogar. O arquivo contém os dois scripts, sem depender do place 95206881. Publicação no Roblox continua sendo feita pelo proprietário no Studio.
+- **HTML:** baixe `dist/Mundial_War_HTML_0_7_1.html` e abra em um navegador. Não exige instalação, servidor ou recursos externos. Também há a versão atual em `web/Mundial_War_HTML.html`.
 - O projeto Rojo usa `default.project.json`; instalação manual: script servidor em ServerScriptService e LocalScript em StarterPlayerScripts.
+
+## Ajuste 0.7.1
+
+Botão Avançar removido. Um clique/toque no destino inicia o avanço; arrastar continua movendo o mapa. Clique em território próprio apenas inspeciona. Construção e modo naval mantêm prioridade. Ataques continuam exigindo guerra declarada. Saves 0.7 permanecem compatíveis.
 
 ## Referência em vídeo — versão 0.7
 
@@ -14,7 +18,7 @@ Jogo de conquista territorial para Ghost, em duas versões: Roblox e HTML offlin
 - Cores de vegetação, areia, montanha e neve sob territórios semitransparentes. Terreno ilustrativo gerado sobre a silhueta existente; não é relevo geográfico real nem a textura do jogo do vídeo.
 - Nome e reserva sobre o maior bloco conectado de cada nação. Roblox mostra o avatar da conta; HTML offline usa um emblema com inicial. Nomes de outros jogadores aparecem com zoom.
 - Tropas de expedição separadas: iniciar desconta o percentual da reserva uma vez; conquistas consomem o efetivo enviado. Parar ou firmar tratado devolve sobreviventes uma única vez. Ao esgotar o efetivo é preciso enviar outra expedição. Redirecionar contra o mesmo dono usa o efetivo em campo.
-- Linhas de rota naval, tooltip no HTML e duplo clique para avançar. No Roblox, seleção e confirmação por Avançar continuam disponíveis.
+- Linhas de rota naval, tooltip no HTML e avanço com um clique no HTML e no Roblox, sem botão de confirmação.
 - Nascimento dos bots afastado das outras capitais; nenhum recurso pago ou loja fictícia.
 - Saves 0.7 separados dos saves 0.6: a partida anterior não é apagada nem convertida automaticamente.
 
@@ -22,7 +26,7 @@ Jogo de conquista territorial para Ghost, em duas versões: Roblox e HTML offlin
 
 - Expansão por expedição a cada 250 ms, na direção selecionada. O avanço considera alvos acessíveis e que cabem no orçamento; uma defesa cara não bloqueia alvos mais baratos.
 - As linhas pretas da referência deixaram de ser canais de água artificiais. A máscara tem 320 × 180 células, 22.043 de terra, e 308 divisões decorativas extraídas da imagem. As divisões são aproximações da ilustração, não fronteiras políticas oficiais.
-- Clique seleciona e destaca a célula; Avançar confirma. O marcador na frente mostra as tropas restantes da expedição; a reserva aparece junto ao nome da nação.
+- Um clique destaca a célula e inicia a expansão ou o ataque. O marcador na frente mostra as tropas restantes da expedição; a reserva aparece junto ao nome da nação.
 - Cidade, fábrica, bunker e porto têm ícones geométricos no mapa e efeitos reais. O painel da seleção explica os efeitos.
 - Guerra, aliança de 180 segundos e trégua de 90 segundos. Ataques exigem guerra declarada. Bots podem aceitar ou recusar propostas conforme sua força; jogadores no Roblox precisam aceitar. Tratados mantêm as conquistas e interrompem operações entre os participantes. Aliança pode ser rompida por declaração de guerra; trégua não pode.
 - Bots priorizam terras livres, avaliam inimigos mais fracos, constroem e buscam trégua quando pressionados. Portos permitem continuar a conquista entre ilhas.
@@ -40,7 +44,7 @@ Jogo de conquista territorial para Ghost, em duas versões: Roblox e HTML offlin
 
 Selecione uma construção e clique em célula sua vazia. Clique novamente no botão para sair do modo de construção. Só uma construção por célula; estruturas capturadas passam a beneficiar o novo dono.
 
-Selecione outra terra e use Avançar. O percentual define as tropas enviadas na nova expedição terrestre ou naval. Parar cancela o avanço. Não há passagem terrestre através do oceano; a operação informa quando não há caminho.
+Clique em outra terra para expandir ou atacar. O percentual define as tropas enviadas na nova expedição terrestre ou naval. Parar cancela o avanço. Não há passagem terrestre através do oceano; a operação informa quando não há caminho.
 
 Para invadir pelo mar, tenha um porto, selecione a costa de destino e use Invadir. São necessários 250 ouro e ao menos 100 tropas selecionadas. A rota passa somente por água. Uma frota por nação; desembarque custa defesa +50 tropas. Sobreviventes retornam à reserva; se houver tratado com o destino, a frota retorna sem atacar.
 

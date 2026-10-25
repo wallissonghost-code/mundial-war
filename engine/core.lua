@@ -68,7 +68,7 @@ local function diplomacy(a,b,kind)
  if kind=="war" then
   if relation(a,b)=="truce" then return false,"A trégua ainda está ativa." end
   relations[pair(a,b)]={kind="war"}
-  return true,"Guerra declarada. Selecione Avançar para avançar."
+  return true,"Guerra declarada. Clique no território para atacar."
  end
  if kind=="accept" then
   local o=offers[a]
