@@ -15,6 +15,7 @@ local world = World.new({
 	Config = Config,
 	MapData = require(Shared.MapData),
 	MapGrid = require(Shared.MapGrid),
+	BuildingStats = require(Shared.BuildingStats),
 	Palette = require(Shared.Palette),
 	Protocol = require(Shared.Protocol),
 	random = math.random,

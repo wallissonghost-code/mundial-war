@@ -10,7 +10,10 @@ Protocol.Actions = {
 	Target = "target",         -- (cell, percent) land expansion/attack, or naval when no land route
 	Cancel = "cancel",         -- (orderId or nil = all)
 	Build = "build",           -- (cell, kind)
-	Warship = "warship",       -- (portCell)
+	Warship = "warship",       -- (portCell) buy a defence boat
+	Patrol = "patrol",         -- (boatId, waterCell)
+	Upgrade = "upgrade",       -- (cell)
+	Weapon = "weapon",         -- (cell, weaponKind)
 	Nuke = "nuke",             -- (cell)
 	Airstrike = "airstrike",   -- (cell)
 	Ally = "ally",             -- (nationId) request or accept

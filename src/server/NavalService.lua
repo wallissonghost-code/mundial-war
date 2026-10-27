@@ -1,9 +1,10 @@
--- Mundial War · ports, troop transports across water, warships, amphibious landings.
+-- Mundial War · ports, troop transports across water, defence boats, amphibious landings.
 local NavalService = {}
 
 local ctx, Config, Map, Territory
 local fleets = {}        -- list of { id, nation, troops, path, progress, target }
-local warships = {}      -- list of { id, nation, port, cell }
+local boats = {}         -- list of { id, nation, port, level, x, y, hp, center, path, step, waypoint }
+local waterBody = nil    -- cell -> connected water body id
 local nextId = 1
 local visit, prev, vstamp = {}, {}, 0
 local nb = {}
@@ -13,18 +14,40 @@ function NavalService.init(context)
 	Config = ctx.Config
 	Map = ctx.Map
 	Territory = ctx.Territory
+	-- connected water bodies, so a boat is only sent where it can actually sail
+	waterBody = {}
+	local id, scratch = 0, {}
+	for start = 1, Map.N do
+		if not Map.land[start] and not waterBody[start] then
+			id = id + 1
+			local queue, head = { start }, 1
+			waterBody[start] = id
+			while head <= #queue do
+				local i = queue[head]
+				head = head + 1
+				local n = Map:neighbors(i, scratch)
+				for k = 1, n do
+					local j = scratch[k]
+					if not Map.land[j] and not waterBody[j] then
+						waterBody[j] = id
+						queue[#queue + 1] = j
+					end
+				end
+			end
+		end
+	end
 end
 
 function NavalService.reset()
-	fleets, warships, nextId = {}, {}, 1
+	fleets, boats, nextId = {}, {}, 1
 end
 
 function NavalService.fleets()
 	return fleets
 end
 
-function NavalService.warships()
-	return warships
+function NavalService.boats()
+	return boats
 end
 
 local function waterNeighbor(cell)
@@ -116,40 +139,87 @@ function NavalService.launch(nid, cell, percent)
 	return true, "Frota a caminho com " .. troops .. " tropas."
 end
 
-function NavalService.buyWarship(nid, portCell)
+local function boatCell(b)
+	return Map:index(math.floor(b.x), math.floor(b.y))
+end
+
+-- Water path between two water cells (BFS, nil when not connected).
+local function waterPath(from, to)
+	if waterBody[from] ~= waterBody[to] then return nil end
+	vstamp = vstamp + 1
+	local queue, head = { from }, 1
+	visit[from] = vstamp
+	prev[from] = 0
+	local scratch = {}
+	while head <= #queue do
+		local i = queue[head]
+		head = head + 1
+		if i == to then
+			local rev = {}
+			while i ~= 0 do rev[#rev + 1] = i i = prev[i] end
+			local path = {}
+			for k = #rev, 1, -1 do path[#path + 1] = rev[k] end
+			return path
+		end
+		local m = Map:neighbors(i, scratch)
+		for k = 1, m do
+			local j = scratch[k]
+			if not Map.land[j] and visit[j] ~= vstamp then
+				visit[j] = vstamp
+				prev[j] = i
+				queue[#queue + 1] = j
+			end
+		end
+	end
+	return nil
+end
+
+function NavalService.boatsAt(portCell)
+	local c = 0
+	for _, b in ipairs(boats) do if b.port == portCell then c = c + 1 end end
+	return c
+end
+
+-- Defence boat: bought at one of your ports; patrols around that port until you send it elsewhere.
+function NavalService.buyBoat(nid, portCell)
 	local N = Config.Naval
 	local n = ctx.Nations.get(nid)
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
 	if not n or not n.alive then return false, "Você não tem nação." end
-	local b = ctx.Buildings.at(portCell)
-	if not b or b.kind ~= "port" or b.owner ~= nid then return false, "Selecione um porto seu." end
-	local here = 0
-	for _, w in ipairs(warships) do
-		if w.port == portCell then here = here + 1 end
-	end
-	if here >= N.WarshipsPerPort then return false, "Este porto já tem " .. N.WarshipsPerPort .. " navios." end
-	if n.gold < N.WarshipGold then return false, "Navio de guerra custa " .. N.WarshipGold .. " de ouro." end
+	local port = ctx.Buildings.at(portCell)
+	if not port or port.kind ~= "port" or port.owner ~= nid then return false, "Selecione um porto seu." end
+	local limit = ctx.Buildings.stat(port, "boats")
+	if NavalService.boatsAt(portCell) >= limit then return false, "Este porto já tem " .. limit .. " barcos. Melhore o porto para ter mais." end
+	if n.gold < N.BoatGold then return false, "Barco de defesa custa " .. N.BoatGold .. " de ouro." end
 	local water = waterNeighbor(portCell)
 	if not water then return false, "Porto sem acesso à água." end
-	n.gold = n.gold - N.WarshipGold
-	warships[#warships + 1] = { id = nextId, nation = nid, port = portCell, cell = water }
+	n.gold = n.gold - N.BoatGold
+	local x, y = Map:xy(water)
+	boats[#boats + 1] = {
+		id = nextId, nation = nid, port = portCell, level = port.level, x = x + 0.5, y = y + 0.5,
+		hp = N.BoatHealth, center = water, path = nil, step = 1, waypoint = nil,
+	}
 	nextId = nextId + 1
-	return true, "Navio de guerra em patrulha."
+	return true, "Barco de defesa lançado. Clique nele e depois na água para escolher onde patrulhar."
+end
+
+function NavalService.patrol(nid, boatId, cell)
+	if not Map:valid(cell) or Map.land[cell] then return false, "Escolha um ponto na água." end
+	for _, b in ipairs(boats) do
+		if b.id == boatId then
+			if b.nation ~= nid then return false, "Esse barco não é seu." end
+			local here = boatCell(b)
+			local path = here and waterPath(here, cell)
+			if not path then return false, "O barco não alcança esse ponto por água." end
+			b.center, b.path, b.step, b.waypoint = cell, path, 1, nil
+			return true, "Barco a caminho da nova patrulha."
+		end
+	end
+	return false, "Barco não encontrado."
 end
 
 function NavalService.onPortLost(portCell)
-	local k = 1
-	for i = 1, #warships do
-		local w = warships[i]
-		local b = ctx.Buildings.at(portCell)
-		if w.port == portCell and (not b or b.owner ~= w.nation) then
-			-- sunk with its port
-		else
-			warships[k] = w
-			k = k + 1
-		end
-	end
-	for i = k, #warships do warships[i] = nil end
+	-- boats already at sea keep fighting for their nation; the port just stops building more
 end
 
 function NavalService.removeNation(nid)
@@ -159,10 +229,96 @@ function NavalService.removeNation(nid)
 	end
 	for i = k, #fleets do fleets[i] = nil end
 	k = 1
-	for i = 1, #warships do
-		if warships[i].nation ~= nid then warships[k] = warships[i] k = k + 1 end
+	for i = 1, #boats do
+		if boats[i].nation ~= nid then boats[k] = boats[i] k = k + 1 end
 	end
-	for i = k, #warships do warships[i] = nil end
+	for i = k, #boats do boats[i] = nil end
+end
+
+local function boatRange(b) return Config.Naval.BoatRange + (b.level - 1) end
+local function boatDamage(b) return Config.Naval.BoatDamage + 4 * (b.level - 1) end
+
+local function moveBoat(b, dt)
+	local N = Config.Naval
+	local tx, ty
+	if b.path and b.step <= #b.path then
+		local x, y = Map:xy(b.path[b.step])
+		tx, ty = x + 0.5, y + 0.5
+	else
+		b.path = nil
+		if not b.waypoint then
+			-- pick a nearby water cell on the patrol circle
+			local cx, cy = Map:xy(b.center)
+			for _ = 1, 8 do
+				local a = ctx.random() * math.pi * 2
+				local r = N.BoatOrbit * (0.5 + ctx.random() * 0.5)
+				local c = Map:index(math.floor(cx + 0.5 + math.cos(a) * r), math.floor(cy + 0.5 + math.sin(a) * r))
+				if c and not Map.land[c] and waterBody[c] == waterBody[b.center] then b.waypoint = c break end
+			end
+			b.waypoint = b.waypoint or b.center
+		end
+		local x, y = Map:xy(b.waypoint)
+		tx, ty = x + 0.5, y + 0.5
+	end
+	local dx, dy = tx - b.x, ty - b.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	local stepLen = N.BoatSpeed * dt
+	if d <= stepLen then
+		b.x, b.y = tx, ty
+		if b.path then b.step = b.step + 1 else b.waypoint = nil end
+	else
+		b.x, b.y = b.x + dx / d * stepLen, b.y + dy / d * stepLen
+	end
+end
+
+-- Boats fight enemy boats, wear down enemy transports and raid gold from enemy ports in reach.
+local function boatCombat(dt)
+	local N = Config.Naval
+	for _, b in ipairs(boats) do
+		local range = boatRange(b)
+		local r2 = range * range
+		local target, best = nil, math.huge
+		for _, o in ipairs(boats) do
+			if o.nation ~= b.nation and o.hp > 0 and ctx.Diplomacy.relation(b.nation, o.nation) == "war" then
+				local d = (o.x - b.x) ^ 2 + (o.y - b.y) ^ 2
+				if d <= r2 and d < best then target, best = o, d end
+			end
+		end
+		if target then target.hp = target.hp - boatDamage(b) * dt end
+		for _, f in ipairs(fleets) do
+			if f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
+				local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
+				if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r2 then
+					f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
+				end
+			end
+		end
+		local here = boatCell(b)
+		if here then
+			local owner = ctx.Nations.get(b.nation)
+			ctx.Buildings.near(here, range, function(p)
+				if p.kind == "port" and p.owner ~= b.nation and ctx.Diplomacy.relation(b.nation, p.owner) == "war" then
+					local victim = ctx.Nations.get(p.owner)
+					if victim and owner then
+						local take = math.min(victim.gold, N.BoatGoldSteal * dt)
+						victim.gold = victim.gold - take
+						owner.gold = owner.gold + take
+					end
+				end
+			end)
+		end
+	end
+	local k = 1
+	for i = 1, #boats do
+		local b = boats[i]
+		if b.hp > 0 then
+			boats[k] = b
+			k = k + 1
+		else
+			ctx.notify(b.nation, "Um barco de defesa seu foi afundado.", "bad")
+		end
+	end
+	for i = k, #boats do boats[i] = nil end
 end
 
 local function land(f)
@@ -207,23 +363,12 @@ function NavalService.tick(dt)
 	if not ctx.Match.isPlaying() then return end
 	local N = Config.Naval
 	local k = 1
-	local r2 = N.WarshipRadius * N.WarshipRadius
 	for i = 1, #fleets do
 		local f = fleets[i]
 		local n = ctx.Nations.get(f.nation)
 		local keep = n ~= nil and n.alive
 		if keep then
 			f.progress = f.progress + N.Speed * dt
-			local pos = f.path[math.min(#f.path, math.floor(f.progress))]
-			local px, py = Map:xy(pos)
-			for _, w in ipairs(warships) do
-				if w.nation ~= f.nation and ctx.Diplomacy.relation(w.nation, f.nation) == "war" then
-					local wx, wy = Map:xy(w.cell)
-					if (wx - px) * (wx - px) + (wy - py) * (wy - py) <= r2 then
-						f.troops = f.troops * (1 - N.WarshipDamagePerSecond * dt)
-					end
-				end
-			end
 			if f.troops < 1 then
 				ctx.notify(f.nation, "Sua frota foi afundada.", "bad")
 				keep = false
@@ -240,6 +385,19 @@ function NavalService.tick(dt)
 		end
 	end
 	for i = k, #fleets do fleets[i] = nil end
+	for _, b in ipairs(boats) do
+		if ctx.Nations.alive(b.nation) then moveBoat(b, dt) end
+	end
+	boatCombat(dt)
+end
+
+-- Boat rows for clients: { id, nation, x, y, health, patrolCell, level }
+function NavalService.boatView()
+	local out = {}
+	for _, b in ipairs(boats) do
+		out[#out + 1] = { b.id, b.nation, math.floor(b.x * 10) / 10, math.floor(b.y * 10) / 10, math.floor(b.hp), b.center, b.level }
+	end
+	return out
 end
 
 function NavalService.publicView()
@@ -255,10 +413,7 @@ function NavalService.snapshot()
 	for _, f in ipairs(fleets) do
 		fl[#fl + 1] = { f.id, f.nation, math.floor(f.troops), f.path, Config.Naval.Speed, f.target, f.progress }
 	end
-	for _, w in ipairs(warships) do
-		ws[#ws + 1] = { w.id, w.nation, w.cell }
-	end
-	return fl, ws
+	return fl, NavalService.boatView()
 end
 
 return NavalService

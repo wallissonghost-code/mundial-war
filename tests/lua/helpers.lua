@@ -10,6 +10,7 @@ H.Config = load("src/shared/GameConfig.lua")
 H.Palette = load("src/shared/Palette.lua")
 H.Protocol = load("src/shared/Protocol.lua")
 H.MapGrid = load("src/shared/MapGrid.lua")
+H.BuildingStats = load("src/shared/BuildingStats.lua")
 
 local cachedReal = nil
 function H.realMapData()
@@ -68,7 +69,7 @@ function H.newWorld(opts)
 	math.randomseed(seed)
 	local mapData = opts.mapData or H.realMapData()
 	local world = World.new({
-		Config = Config, Palette = H.Palette, Protocol = H.Protocol, MapGrid = H.MapGrid,
+		Config = Config, Palette = H.Palette, Protocol = H.Protocol, MapGrid = H.MapGrid, BuildingStats = H.BuildingStats,
 		MapData = mapData, Services = services, random = math.random,
 	})
 	return world, world.ctx

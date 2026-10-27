@@ -8,6 +8,7 @@ local Config = require(Shared.GameConfig)
 local Protocol = require(Shared.Protocol)
 local Palette = require(Shared.Palette)
 local MapGrid = require(Shared.MapGrid)
+local BuildingStats = require(Shared.BuildingStats)
 
 local ClientState = require(script.ClientState)
 local MapRenderer = require(script.MapRenderer)
@@ -42,7 +43,7 @@ local commandRemote = remotes:WaitForChild(Protocol.CommandRemote)
 local eventRemote = remotes:WaitForChild(Protocol.EventRemote)
 
 local Map = MapGrid.new(require(Shared.MapData))
-local state = ClientState.new(Map, Protocol, Config, Palette)
+local state = ClientState.new(Map, Protocol, Config, Palette, BuildingStats)
 
 -- Screen layout: the ocean-coloured viewport is the whole screen; the world frame moves inside it.
 local gui = Instance.new("ScreenGui")
@@ -75,8 +76,10 @@ local function send(action, a, b)
 end
 
 -- Interaction state ------------------------------------------------------------------------
-local mode = nil          -- nil | "build" | "nuke" | "airstrike" | "warship"
-local buildKind = nil
+local mode = nil          -- nil | "build" | "weapon" | "patrol"
+local buildKind = nil     -- building kind (build mode) or weapon kind (weapon mode)
+local patrolBoat = nil    -- boat id while choosing where it patrols
+local selectedCell = nil  -- own building whose reach is being shown
 local pending = nil       -- { cell, at, kind }
 local hud
 
@@ -85,13 +88,47 @@ local function clearAim()
 	overlay:setAim(nil, nil)
 end
 
+local updateRanges
 local function setMode(newMode, kind)
 	mode, buildKind = newMode, kind
+	if mode ~= "patrol" then patrolBoat = nil end
 	clearAim()
-	hud:showTray(mode == "build", buildKind)
+	selectedCell = nil
+	hud:showTray(mode == "build", mode == "build" and buildKind or nil)
+	hud:showWeapons(mode == "weapon", mode == "weapon" and buildKind or nil)
 	hud.tools.build.BackgroundColor3 = mode == "build" and Color3.fromRGB(92, 74, 30) or Color3.fromRGB(34, 44, 58)
-	hud.tools.nuke.BackgroundColor3 = mode == "nuke" and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
-	hud.tools.airstrike.BackgroundColor3 = mode == "airstrike" and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
+	hud.tools.weapons.BackgroundColor3 = mode == "weapon" and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
+	updateRanges(nil)
+end
+
+-- Reach circles: where the chosen building/bomb would act, plus our existing defences.
+local hoverCell = nil
+updateRanges = function(cell)
+	if cell ~= nil then hoverCell = cell end
+	local list = {}
+	local gold, red, blue = Color3.fromRGB(240, 196, 92), Color3.fromRGB(235, 90, 80), Color3.fromRGB(120, 200, 255)
+	if mode == "build" then
+		for c, b in pairs(state.buildings) do
+			if b.owner == state.you and Config.Buildings[b.kind].defensive then
+				list[#list + 1] = { c, BuildingStats.reach(Config, b.kind, b.level), blue }
+			end
+		end
+		local r = buildKind and BuildingStats.reach(Config, buildKind, 1)
+		if r and hoverCell and Map.land[hoverCell] then list[#list + 1] = { hoverCell, r, gold } end
+	elseif mode == "weapon" and buildKind then
+		local w = Config.Weapons[buildKind]
+		if w.launcher == "airfield" then
+			for c, b in pairs(state.buildings) do
+				if b.owner == state.you and b.kind == "airfield" then list[#list + 1] = { c, BuildingStats.reach(Config, "airfield", b.level), blue } end
+			end
+		end
+		if hoverCell then list[#list + 1] = { hoverCell, w.radius, red } end
+	elseif selectedCell and state.buildings[selectedCell] then
+		local b = state.buildings[selectedCell]
+		local r = BuildingStats.reach(Config, b.kind, b.level)
+		if r then list[#list + 1] = { selectedCell, r, gold } end
+	end
+	overlay:setRanges(list)
 end
 
 local function nationName(id)
@@ -147,6 +184,10 @@ end
 
 local function handleClick(p, button)
 	hud:hidePopover()
+	if not mode and selectedCell then
+		selectedCell = nil
+		updateRanges(nil)
+	end
 	local cell = camera:screenToCell(p)
 	if not cell then return end
 	local owner = state.owner[cell]
@@ -166,24 +207,36 @@ local function handleClick(p, button)
 		return
 	end
 
-	if mode == "build" and buildKind then
-		send(Actions.Build, cell, buildKind)
+	if mode == "build" then
+		if buildKind then send(Actions.Build, cell, buildKind) else hud:toast("Escolha uma construção na lista.") end
 		return
-	elseif mode == "warship" then
-		send(Actions.Warship, cell)
+	elseif mode == "patrol" then
+		if Map.land[cell] then hud:toast("Escolha um ponto na água para o barco patrulhar.", "bad") return end
+		send(Actions.Patrol, patrolBoat, cell)
 		setMode(nil)
 		return
-	elseif mode == "nuke" or mode == "airstrike" then
+	elseif mode == "weapon" then
+		if not buildKind then hud:toast("Escolha uma arma na lista.") return end
+		local w = Config.Weapons[buildKind]
 		local now = os.clock()
-		if pending and pending.kind == mode and Map:distance(pending.cell, cell) <= Config.View.ConfirmRadius
+		if pending and pending.kind == "weapon" and Map:distance(pending.cell, cell) <= Config.View.ConfirmRadius
 			and now - pending.at <= Config.View.ConfirmTimeout then
-			send(mode == "nuke" and Actions.Nuke or Actions.Airstrike, pending.cell)
+			send(Actions.Weapon, pending.cell, buildKind)
 			setMode(nil)
 			return
 		end
-		pending = { cell = cell, at = now, kind = mode }
-		local price = mode == "nuke" and Config.Strategic.NukeGold or Config.Strategic.AirstrikeGold
-		overlay:setAim(nil, cell, string.format("Clique de novo para lançar %s · 💰 %s", mode == "nuke" and "☢" or "✈", Protocol.formatK(price)), Color3.fromRGB(255, 90, 80))
+		pending = { cell = cell, at = now, kind = "weapon" }
+		overlay:setAim(nil, cell, string.format("Clique de novo para lançar %s %s · 💰 %s", w.icon, w.name, Protocol.formatK(w.gold)), Color3.fromRGB(255, 90, 80))
+		return
+	end
+
+	-- clicking one of our boats selects it; the next click on water sets its patrol
+	local mx, my = camera:screenToMap(p)
+	local boat = state:boatNear(state.you, mx, my, math.max(1.5, 12 / camera.scale))
+	if boat then
+		setMode("patrol")
+		patrolBoat = boat[1]
+		hud:toast("Barco selecionado: clique na água onde ele deve patrulhar.")
 		return
 	end
 
@@ -192,11 +245,20 @@ local function handleClick(p, button)
 		local b = state.buildings[cell]
 		if b then
 			local def = Config.Buildings[b.kind]
+			local body = def.purpose .. "\n" .. table.concat(BuildingStats.lines(Config, b.kind, b.level), " · ")
+			if b.off then body = "⚡ Desligada por EMP.\n" .. body end
 			local buttons = {}
-			if b.kind == "port" then
-				buttons[1] = { "🚢 Navio de guerra", function() send(Actions.Warship, cell) end }
+			local cost = BuildingStats.upgradeCost(Config, b.kind, b.level)
+			if cost then
+				body = body .. "\nNível " .. (b.level + 1) .. ": " .. table.concat(BuildingStats.lines(Config, b.kind, b.level + 1), " · ")
+				buttons[#buttons + 1] = { "⬆ Melhorar · 💰 " .. Protocol.formatK(cost), function() send(Actions.Upgrade, cell) end }
 			end
-			hud:showPopover(p, def.icon .. " " .. def.name, def.description, buttons)
+			if b.kind == "port" then
+				buttons[#buttons + 1] = { "🚢 Barco · 💰 " .. Protocol.formatK(Config.Naval.BoatGold), function() send(Actions.Warship, cell) end }
+			end
+			hud:showPopover(p, def.icon .. " " .. def.name .. " · Nível " .. b.level, body, buttons)
+			selectedCell = cell
+			updateRanges(nil)
 		end
 		return
 	end
@@ -245,8 +307,10 @@ end
 local helpText = table.concat({
 	"<b>Objetivo:</b> dominar " .. math.floor(Config.Match.VictoryPercent * 100) .. "% das terras do mundo.",
 	"<b>Começar:</b> clique numa terra livre para fundar sua capital.",
-	"<b>Expandir/atacar:</b> escolha o % de tropas, clique no destino e clique de novo para confirmar. A fronteira avança sozinha.",
-	"<b>Mar:</b> construa um porto e clique numa costa do outro lado.",
+	"<b>Expandir/atacar:</b> escolha o % de tropas e clique no destino. A fronteira avança sozinha.",
+	"<b>Construções:</b> 🏗 mostra para que serve cada uma e o alcance no mapa. Clique numa construção sua para melhorar o nível.",
+	"<b>Mar:</b> construa um porto e clique numa costa do outro lado. No porto, compre barcos de defesa; clique num barco e depois na água para escolher a patrulha.",
+	"<b>Bombas:</b> 💣 aparece quando você tem base aérea ou silo. Clique no alvo e confirme com um segundo clique.",
 	"<b>Câmera:</b> arraste para mover, roda do mouse/pinça para zoom, WASD, F para ver o mundo, Espaço para sua capital.",
 	"<b>Atalhos:</b> 1–5 percentual, B construir, Esc cancelar, botão direito numa nação para diplomacia.",
 }, "\n")
@@ -260,15 +324,17 @@ hud = HUD.new(state, gui, {
 	onCancel = function() send(Actions.Cancel, nil) end,
 	onTool = function(name)
 		if name == "build" then setMode(mode ~= "build" and "build" or nil)
-		elseif name == "nuke" or name == "airstrike" then
-			setMode(mode ~= name and name or nil)
-			if mode then hud:toast(name == "nuke" and "Escolha o alvo do míssil nuclear." or "Escolha um alvo inimigo para o ataque aéreo.") end
+		elseif name == "weapons" then
+			setMode(mode ~= "weapon" and "weapon" or nil)
 		elseif name == "ranking" then hud:toggleRanking()
 		elseif name == "fit" then camera:fit()
 		elseif name == "help" then hud:showCenter("Mundial War", helpText, true) end
 	end,
 	onBuild = function(kind)
 		if buildKind == kind then setMode("build", nil) else setMode("build", kind) end
+	end,
+	onWeapon = function(kind)
+		if buildKind == kind then setMode("weapon", nil) else setMode("weapon", kind) end
 	end,
 })
 
@@ -277,6 +343,7 @@ InputController.new(camera, Config, {
 	onKey = handleKey,
 	onHover = function(p)
 		if debugOverlay then debugOverlay:hover(p) end
+		if mode == "build" or mode == "weapon" then updateRanges(camera:screenToCell(p)) end
 	end,
 })
 
@@ -287,8 +354,10 @@ task.spawn(function()
 		local text
 		if mode == "build" then
 			text = buildKind and ("🏗 " .. Config.Buildings[buildKind].name .. " — clique numa célula sua · Esc sai") or "🏗 Escolha uma construção"
-		elseif mode == "nuke" or mode == "airstrike" then
-			text = (mode == "nuke" and "☢ Alvo nuclear" or "✈ Alvo do ataque aéreo") .. " · Esc cancela"
+		elseif mode == "weapon" then
+			text = buildKind and (Config.Weapons[buildKind].icon .. " Escolha o alvo · Esc cancela") or "💣 Escolha uma arma"
+		elseif mode == "patrol" then
+			text = "🚢 Clique na água onde o barco deve patrulhar · Esc cancela"
 		elseif phase == "spawn" then
 			local left = math.ceil(state:timeLeft())
 			text = state.you and ("A guerra começa em " .. left .. "s") or ("Clique numa terra livre para fundar sua nação · " .. left .. "s")

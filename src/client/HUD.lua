@@ -88,7 +88,7 @@ function HUD.new(state, gui, handlers)
 	make("UIPadding", tools, { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5) })
 	self.tools = {}
 	local toolList = {
-		{ "build", "🏗", "Construir" }, { "airstrike", "✈", "Ataque aéreo" }, { "nuke", "☢", "Míssil nuclear" },
+		{ "build", "🏗", "Construir" }, { "weapons", "💣", "Bombas e ataques" },
 		{ "ranking", "🏆", "Ranking" }, { "fit", "🌍", "Ver o mundo" }, { "help", "?", "Ajuda" },
 	}
 	for index, t in ipairs(toolList) do
@@ -96,26 +96,31 @@ function HUD.new(state, gui, handlers)
 		b.Activated:Connect(function() self.h.onTool(t[1]) end)
 		self.tools[t[1]] = b
 	end
-	-- weapons appear only after building their launcher
-	self.tools.airstrike.Visible = false
-	self.tools.nuke.Visible = false
+	-- weapons appear only after building an air base or a silo
+	self.tools.weapons.Visible = false
 
-	-- Build tray (above the tools) -----------------------------------------------------------
-	self.tray = panel(gui, { Name = "BuildTray", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -60), Size = UDim2.fromOffset(300, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 30 })
-	make("UIPadding", self.tray, { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) })
-	make("UIGridLayout", self.tray, { CellSize = UDim2.fromOffset(141, 44), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder })
-	self.trayButtons = {}
-	for index, kind in ipairs(self.Config.BuildingOrder) do
-		local def = self.Config.Buildings[kind]
-		local b = button(self.tray, "", { LayoutOrder = index, ZIndex = 31, TextSize = 12 })
-		b.RichText = true
-		b.TextXAlignment = Enum.TextXAlignment.Left
-		make("UIPadding", b, { PaddingLeft = UDim.new(0, 8) })
-		b.Activated:Connect(function() self.h.onBuild(kind) end)
-		self.trayButtons[kind] = b
-		b:SetAttribute("Name", def.icon .. " " .. def.name)
+	-- Build and weapon trays (above the tools): a grid of choices plus an explanation line ----
+	local function tray(name, order, defs, onPick)
+		local t = panel(gui, { Name = name, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -60), Size = UDim2.fromOffset(300, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 30 })
+		make("UIPadding", t, { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) })
+		make("UIListLayout", t, { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+		local grid = make("Frame", t, { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 31 })
+		make("UIGridLayout", grid, { CellSize = UDim2.fromOffset(141, 44), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+		local buttons = {}
+		for index, kind in ipairs(order) do
+			local b = button(grid, "", { LayoutOrder = index, ZIndex = 31, TextSize = 12 })
+			b.RichText = true
+			b.TextXAlignment = Enum.TextXAlignment.Left
+			make("UIPadding", b, { PaddingLeft = UDim.new(0, 8) })
+			b.Activated:Connect(function() onPick(kind) end)
+			buttons[kind] = b
+		end
+		local info = make("TextLabel", t, { LayoutOrder = 2, BackgroundTransparency = 1, TextColor3 = MUTED, Font = FONT, TextSize = 12, TextWrapped = true, RichText = true,
+			TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Text = "", ZIndex = 31 })
+		return t, buttons, info
 	end
-	self.trayInfo = make("TextLabel", self.tray, { LayoutOrder = 99, BackgroundTransparency = 1, TextColor3 = MUTED, Font = FONT, TextSize = 11, TextWrapped = true, Text = "Escolha e clique numa célula sua.", ZIndex = 31 })
+	self.tray, self.trayButtons, self.trayInfo = tray("BuildTray", self.Config.BuildingOrder, self.Config.Buildings, function(kind) self.h.onBuild(kind) end)
+	self.weaponTray, self.weaponButtons, self.weaponInfo = tray("WeaponTray", self.Config.WeaponOrder, self.Config.Weapons, function(kind) self.h.onWeapon(kind) end)
 
 	-- Top banner (phase / mode) and notices -------------------------------------------------
 	self.banner = panel(gui, { Name = "Banner", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 20, Visible = false })
@@ -223,10 +228,10 @@ function HUD:refreshMe()
 	end
 	self.cancelButton.Visible = mine > 0
 	self.cancelButton.Text = mine > 1 and ("✖" .. mine) or "✖"
-	-- tools only when they can be used
-	self.tools.airstrike.Visible = (me.cooldowns and me.cooldowns.airfield) ~= nil
-	self.tools.nuke.Visible = (me.cooldowns and me.cooldowns.silo) ~= nil
+	-- weapons only once something can launch them
+	self.tools.weapons.Visible = me.cooldowns ~= nil and (me.cooldowns.airfield ~= nil or me.cooldowns.silo ~= nil)
 	if self.tray.Visible then self:refreshTray() end
+	if self.weaponTray.Visible then self:refreshWeapons() end
 end
 
 function HUD:refreshTray()
@@ -239,9 +244,37 @@ function HUD:refreshTray()
 		b.BackgroundColor3 = (self.selectedBuild == kind) and Color3.fromRGB(92, 74, 30) or Color3.fromRGB(34, 44, 58)
 		b.TextTransparency = affordable and 0 or 0.35
 	end
-	local def = self.selectedBuild and self.Config.Buildings[self.selectedBuild]
-	self.trayInfo.Text = def and def.description or "Escolha uma construção e clique numa célula sua."
-	self.trayInfo.Size = UDim2.new(1, 0, 0, 30)
+	local kind = self.selectedBuild
+	if kind then
+		local def = self.Config.Buildings[kind]
+		local lines = self.state.Stats.lines(self.Config, kind, 1)
+		self.trayInfo.Text = "<b>" .. def.name .. "</b>: " .. def.purpose .. "\n" .. table.concat(lines, " · ")
+	else
+		self.trayInfo.Text = "Escolha uma construção para ver para que serve e o alcance; depois clique numa célula sua."
+	end
+end
+
+function HUD:refreshWeapons()
+	local me = self.state.me
+	for kind, b in pairs(self.weaponButtons) do
+		local w = self.Config.Weapons[kind]
+		local ready = me and me.cooldowns and me.cooldowns[w.launcher]
+		local affordable = me and me.gold >= w.gold and ready ~= nil
+		local status = ready == nil and ("requer " .. self.Config.Buildings[w.launcher].name)
+			or (ready > 0 and string.format("recarga %ds", math.ceil(ready)) or ("💰 " .. self.Protocol.formatK(w.gold)))
+		b.Text = string.format("%s <b>%s</b>\n<font size=\"11\" color=\"%s\">%s</font>", w.icon, w.name, affordable and "#f0c45c" or "#8a8f96", status)
+		b.BackgroundColor3 = (self.selectedWeapon == kind) and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
+		b.TextTransparency = affordable and 0 or 0.35
+	end
+	local w = self.selectedWeapon and self.Config.Weapons[self.selectedWeapon]
+	self.weaponInfo.Text = w and ("<b>" .. w.name .. "</b>: " .. w.purpose .. " Raio " .. w.radius .. ". Clique no alvo e confirme com um segundo clique.")
+		or "Escolha uma arma. Aviões saem da base aérea; bombas EMP, atômica e de hidrogênio, do silo."
+end
+
+function HUD:showWeapons(visible, selected)
+	self.weaponTray.Visible = visible
+	self.selectedWeapon = selected
+	if visible then self:refreshWeapons() end
 end
 
 function HUD:showTray(visible, selected)

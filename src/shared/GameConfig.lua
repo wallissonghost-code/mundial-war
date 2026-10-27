@@ -88,32 +88,47 @@ GameConfig.Combat = {
 }
 
 -- Buildings ----------------------------------------------------------------
--- cost grows with each building of the same kind owned: cost*(1+CostGrowth*count)
+-- Cost of a new building grows with each one of the same kind owned: cost*(1+CostGrowth*count).
+-- Every building can be upgraded to MaxBuildingLevel; level L -> L+1 costs cost*UpgradeCostFactor*L.
+-- Each stat grows by perLevel[stat] per level above 1 (see shared/BuildingStats.lua).
 GameConfig.CostGrowth = 0.35
 GameConfig.MinBuildingSpacing = 2      -- cells between any two buildings
+GameConfig.MaxBuildingLevel = 5
+GameConfig.UpgradeCostFactor = 0.6
 GameConfig.Buildings = {
 	city = { name = "Cidade", icon = "🏙", cost = 1000, growth = 25, capacity = 15000, gold = 3,
-		description = "+25 tropas/s, +15.000 capacidade, +3 ouro/s" },
+		perLevel = { growth = 15, capacity = 10000, gold = 3 },
+		purpose = "Aumenta a população: mais tropas por segundo, mais capacidade e um pouco de ouro." },
 	factory = { name = "Fábrica", icon = "🏭", cost = 1500, gold = 25,
-		description = "+25 ouro/s; libera tanques e silo" },
-	port = { name = "Porto", icon = "⚓", cost = 1200, gold = 6, coastal = true,
-		description = "Litoral. Frotas de invasão e navios de guerra" },
-	bunker = { name = "Bunker", icon = "🛡", cost = 600, radius = 5, defense = 1.8,
-		description = "Ataques num raio de 5 custam ×1,8" },
-	tower = { name = "Torre de sniper", icon = "🎯", cost = 900, radius = 9, attrition = 0.015,
-		description = "Frentes inimigas num raio de 9 perdem 1,5% por segundo" },
-	machinegun = { name = "Metralhadora", icon = "🔫", cost = 1100, radius = 6, massDefense = 15000,
-		description = "Ataques grandes num raio de 6 custam até ×2" },
-	artillery = { name = "Artilharia", icon = "💥", cost = 1800, radius = 14, interval = 2, damage = 0.03, support = 0.8,
-		description = "Bombardeia frentes inimigas (raio 14); seus ataques ali custam ×0,8" },
+		perLevel = { gold = 18 },
+		purpose = "Gera ouro e libera a fábrica de tanques e o silo." },
+	port = { name = "Porto", icon = "⚓", cost = 1200, gold = 6, coastal = true, boats = 2,
+		perLevel = { gold = 5, boats = 1 },
+		purpose = "Só no litoral. Envia frotas de invasão pelo mar e constrói barcos de defesa." },
+	bunker = { name = "Bunker", icon = "🛡", cost = 600, radius = 5, defense = 1.8, defensive = true,
+		perLevel = { radius = 1, defense = 0.25 },
+		purpose = "Fortifica a região: ataques inimigos dentro do alcance custam mais tropas." },
+	tower = { name = "Torre de sniper", icon = "🎯", cost = 900, radius = 9, attrition = 0.015, defensive = true,
+		perLevel = { radius = 1.5, attrition = 0.006 },
+		purpose = "Desgasta as frentes inimigas que avançam dentro do alcance, a cada segundo." },
+	machinegun = { name = "Metralhadora", icon = "🔫", cost = 1100, radius = 6, massDefense = 15000, maxFactor = 2, defensive = true,
+		perLevel = { radius = 1, maxFactor = 0.25 },
+		purpose = "Contra grandes exércitos: quanto maior o ataque no alcance, mais caro fica." },
+	artillery = { name = "Artilharia", icon = "💥", cost = 1800, radius = 14, interval = 2, damage = 0.03, support = 0.8, defensive = true,
+		perLevel = { radius = 2, damage = 0.01, support = -0.04 },
+		purpose = "Bombardeia frentes inimigas no alcance e barateia seus próprios ataques ali." },
 	tankfactory = { name = "Fábrica de tanques", icon = "🚜", cost = 2500, requires = "factory", attackBonus = 0.08, attackFloor = 0.6,
-		description = "-8% no custo de ataque (mín. ×0,6)" },
+		perLevel = { attackBonus = 0.03 },
+		purpose = "Blindados: todos os seus ataques custam menos tropas (mínimo ×0,6 somando todas)." },
 	airfield = { name = "Base aérea", icon = "✈", cost = 3000, range = 90,
-		description = "Libera bombardeio aéreo até 90 células" },
-	airdefense = { name = "Defesa antiaérea", icon = "📡", cost = 2000, radius = 14, intercept = 0.6,
-		description = "60% de chance de interceptar mísseis e aviões num raio de 14" },
-	silo = { name = "Silo nuclear", icon = "☢", cost = 6000, requires = "factory",
-		description = "Permite lançar armas nucleares" },
+		perLevel = { range = 20 },
+		purpose = "Lança ataques aéreos e bombas de fragmentação dentro do alcance." },
+	airdefense = { name = "Defesa antiaérea", icon = "📡", cost = 2000, radius = 14, intercept = 0.6, defensive = true,
+		perLevel = { radius = 2, intercept = 0.08 },
+		purpose = "Pode derrubar mísseis e aviões inimigos que caiam dentro do alcance." },
+	silo = { name = "Silo de mísseis", icon = "🚀", cost = 6000, requires = "factory", cooldownFactor = 1,
+		perLevel = { cooldownFactor = -0.12 },
+		purpose = "Lança bombas EMP, atômicas e, a partir do nível 3, de hidrogênio. Cada nível recarrega mais rápido." },
 }
 GameConfig.BuildingOrder = { "city", "factory", "port", "bunker", "tower", "machinegun", "artillery", "tankfactory", "airfield", "airdefense", "silo" }
 
@@ -123,25 +138,37 @@ GameConfig.Naval = {
 	MinTroops = 100,
 	MaxFleetsPerNation = 3,
 	Speed = 14,                        -- water cells per second
-	WarshipGold = 1500,
-	WarshipsPerPort = 2,
-	WarshipRadius = 10,
-	WarshipDamagePerSecond = 0.08,     -- share of a passing enemy transport destroyed per second
+	-- Defence boat: bought at a port, patrols around a point you choose on the water
+	BoatGold = 1500,
+	BoatHealth = 100,
+	BoatSpeed = 9,                     -- cells per second
+	BoatRange = 9,                     -- weapons reach (+1 per level of its port)
+	BoatOrbit = 3,                     -- patrol circle around the chosen point
+	BoatDamage = 14,                   -- health per second against enemy boats (+4 per port level)
+	BoatTransportDamage = 0.1,         -- share of a passing enemy transport destroyed per second
+	BoatGoldSteal = 10,                -- gold per second taken from each enemy port in reach
 }
 
 -- Strategic weapons --------------------------------------------------------------
-GameConfig.Strategic = {
-	NukeGold = 8000,
-	NukeCooldown = 90,                 -- per silo
-	NukeSpeed = 30,                    -- cells per second
-	NukeRadius = 10,                   -- buildings destroyed, troops killed
-	NukeFalloutRadius = 6,             -- cells become neutral
-	AirstrikeGold = 1200,
-	AirstrikeCooldown = 30,            -- per airfield
-	AirstrikeSpeed = 45,
-	AirstrikeRadius = 3,
-	AirstrikeTroopDamage = 0.06,       -- share of the victim's troops
+-- launcher: building that fires it (one ready launcher of that kind is used; each has its own cooldown)
+GameConfig.Weapons = {
+	airstrike = { name = "Ataque aéreo", icon = "✈", gold = 1200, launcher = "airfield", cooldown = 30, speed = 45,
+		radius = 3, troopShare = 0.06, destroys = true,
+		purpose = "Destrói construções num raio pequeno e mata 6% das tropas do alvo." },
+	cluster = { name = "Bomba de fragmentação", icon = "💣", gold = 2500, launcher = "airfield", cooldown = 40, speed = 40,
+		radius = 6, troopKill = 1.5, destroys = false,
+		purpose = "Mata muitas tropas na área sem destruir construções nem o território." },
+	emp = { name = "Bomba EMP", icon = "⚡", gold = 4000, launcher = "silo", cooldown = 60, speed = 30,
+		radius = 12, disable = 45, destroys = false,
+		purpose = "Desliga todas as construções inimigas da área por 45 segundos." },
+	atomic = { name = "Bomba atômica", icon = "☢", gold = 8000, launcher = "silo", cooldown = 90, speed = 30,
+		radius = 10, fallout = 6, troopKill = 2, destroys = true,
+		purpose = "Destrói construções, mata tropas e deixa o centro sem dono." },
+	hydrogen = { name = "Bomba de hidrogênio", icon = "☣", gold = 20000, launcher = "silo", minLevel = 3, cooldown = 150, speed = 24,
+		radius = 18, fallout = 11, troopKill = 2.5, destroys = true,
+		purpose = "A maior explosão. Requer silo nível 3." },
 }
+GameConfig.WeaponOrder = { "airstrike", "cluster", "emp", "atomic", "hydrogen" }
 
 -- Diplomacy ----------------------------------------------------------------------
 GameConfig.Diplomacy = {
@@ -173,7 +200,7 @@ GameConfig.View = {
 	ZoomStep = 1.15,
 	KeyboardPanSpeed = 900,            -- screen pixels per second
 	DragThreshold = 6,
-	TwoClickConfirm = true,            -- first click aims, second click on the same spot confirms
+	TwoClickConfirm = false,           -- true: first click aims, second click confirms (weapons always confirm)
 	ConfirmRadius = 3,                 -- cells
 	ConfirmTimeout = 5,
 	LOD = { Regional = 1.6, Local = 4.0 }, -- zoom (multiples of the fit-to-screen zoom)

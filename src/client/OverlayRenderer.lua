@@ -189,9 +189,14 @@ function OverlayRenderer:updateBuildings()
 			self.icons[cell] = icon
 			fresh = true
 		end
-		if fresh or icon:GetAttribute("Owner") ~= b.owner then
+		if fresh or icon:GetAttribute("Owner") ~= b.owner or icon:GetAttribute("Level") ~= b.level or icon:GetAttribute("Off") ~= b.off then
 			icon:SetAttribute("Owner", b.owner)
-			icon.BackgroundColor3 = rgb(state.Palette.shade(state:nationColor(b.owner), 0.75))
+			icon:SetAttribute("Level", b.level)
+			icon:SetAttribute("Off", b.off)
+			icon.BackgroundColor3 = b.off and Color3.fromRGB(70, 70, 70) or rgb(state.Palette.shade(state:nationColor(b.owner), 0.75))
+			local badge = icon:FindFirstChild("Level") or make("TextLabel", icon, { Name = "Level", AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromScale(1.15, 1.15), Size = UDim2.fromScale(0.55, 0.55), BackgroundColor3 = INK, TextColor3 = Color3.fromRGB(240, 196, 92), Font = FONT, TextScaled = true, BorderSizePixel = 0, ZIndex = 5 })
+			badge.Text = tostring(b.level)
+			badge.Visible = b.level > 1
 		end
 		if fresh or sizeChanged then
 			icon.Size = UDim2.fromOffset(size, size)
@@ -275,14 +280,40 @@ function OverlayRenderer:updateOrders()
 	end
 	release(self.orderItems)
 
-	for _, w in ipairs(state.warships) do
-		local item = pool(self.shipItems, w[1], function()
-			return { icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = "🚢", TextScaled = true, Font = FONT, ZIndex = 5 }) }
+	for _, w in ipairs(state.boats) do
+		local id, nation, x, y, health, patrol = w[1], w[2], w[3], w[4], w[5], w[6]
+		local mine = nation == state.you
+		local item = pool(self.shipItems, id, function()
+			local it = {
+				icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = "🚢", TextScaled = true, Font = FONT, ZIndex = 6 }),
+				bar = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0), BorderSizePixel = 0, BackgroundColor3 = INK, ZIndex = 6 }),
+				ring = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 3 }),
+			}
+			make("Frame", it.bar, { Name = "Fill", BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(110, 200, 130), ZIndex = 7 })
+			make("UICorner", it.ring, { CornerRadius = UDim.new(1, 0) })
+			make("UIStroke", it.ring, { Name = "Stroke", Thickness = 1, Transparency = 0.4 })
+			return it
 		end)
-		item.icon.Position = self:pos(w[3])
-		local s = math.clamp(cam.scale * 1.8, 12, 26)
+		local s = math.clamp(cam.scale * 1.8, 14, 26)
+		local visible = lod >= 1 or mine
+		-- glide between the 0.4 s server updates
+		local info = TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear)
+		TweenService:Create(item.icon, info, { Position = self:posXY(x, y) }):Play()
+		TweenService:Create(item.bar, info, { Position = self:posXY(x, y + 0.9) }):Play()
 		item.icon.Size = UDim2.fromOffset(s, s)
-		item.icon.Visible = lod >= 1 or w[2] == state.you
+		item.icon.Visible = visible
+		item.bar.Size = UDim2.fromOffset(s, 3)
+		item.bar.Visible = visible
+		item.bar.Fill.Size = UDim2.fromScale(math.clamp(health / self.Config.Naval.BoatHealth, 0, 1), 1)
+		item.bar.Fill.BackgroundColor3 = rgb(state:nationColor(nation))
+		-- our own boats show their patrol circle
+		item.ring.Visible = mine and patrol ~= nil
+		if patrol then
+			local r = self.Config.Naval.BoatOrbit + 1
+			item.ring.Position = self:pos(patrol)
+			item.ring.Size = UDim2.fromScale(r * 2 / self.Map.W, r * 2 / self.Map.H)
+			item.ring.Stroke.Color = rgb(state:nationColor(nation))
+		end
 	end
 	release(self.shipItems)
 end
@@ -327,7 +358,7 @@ function OverlayRenderer:animate()
 	for id, m in pairs(state.missiles) do
 		local item = pool(self.missileItems, id, function()
 			local it = {
-				icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = m.kind == "nuke" and "☢" or "✈", TextColor3 = Color3.fromRGB(255, 230, 120), TextStrokeTransparency = 0, Font = FONT, TextSize = 20, ZIndex = 9 }),
+				icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = (self.Config.Weapons[m.kind] or { icon = "✈" }).icon, TextColor3 = Color3.fromRGB(255, 230, 120), TextStrokeTransparency = 0, Font = FONT, TextSize = 20, ZIndex = 9 }),
 				target = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 8 }),
 			}
 			make("UICorner", it.target, { CornerRadius = UDim.new(1, 0) })
@@ -339,7 +370,7 @@ function OverlayRenderer:animate()
 		local dist = math.max(1, math.sqrt((bx - ax) ^ 2 + (by - ay) ^ 2))
 		local t = math.min(1, (m.progress + (now - m.t0) * m.speed) / dist)
 		item.icon.Position = self:posXY(ax + (bx - ax) * t, ay + (by - ay) * t)
-		local radius = m.kind == "nuke" and self.Config.Strategic.NukeRadius or self.Config.Strategic.AirstrikeRadius
+		local radius = (self.Config.Weapons[m.kind] or { radius = 3 }).radius
 		item.target.Position = self:pos(m.to)
 		item.target.Size = UDim2.fromScale(radius * 2 / Map.W, radius * 2 / Map.H)
 	end
@@ -347,7 +378,7 @@ function OverlayRenderer:animate()
 end
 
 function OverlayRenderer:flash(kind, cell, stopped)
-	local radius = kind == "nuke" and self.Config.Strategic.NukeRadius or self.Config.Strategic.AirstrikeRadius
+	local radius = (self.Config.Weapons[kind] or { radius = 3 }).radius
 	local ring = make("Frame", self.layer, {
 		AnchorPoint = Vector2.new(0.5, 0.5), Position = self:pos(cell), ZIndex = 9,
 		BackgroundColor3 = stopped and Color3.fromRGB(120, 200, 255) or Color3.fromRGB(255, 210, 120),
@@ -358,6 +389,26 @@ function OverlayRenderer:flash(kind, cell, stopped)
 	local tween = TweenService:Create(ring, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = target, BackgroundTransparency = 1 })
 	tween:Play()
 	tween.Completed:Connect(function() ring:Destroy() end)
+end
+
+-- Reach circles: { { cell, radius, color } } (build preview, selected building, own defences).
+function OverlayRenderer:setRanges(list)
+	self.rangeItems = self.rangeItems or {}
+	for k, r in ipairs(list) do
+		local ring = self.rangeItems[k]
+		if not ring then
+			ring = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 0.88, ZIndex = 3 })
+			make("UICorner", ring, { CornerRadius = UDim.new(1, 0) })
+			make("UIStroke", ring, { Name = "Stroke", Thickness = 1.5, Transparency = 0.15 })
+			self.rangeItems[k] = ring
+		end
+		ring.Visible = true
+		ring.Position = self:pos(r[1])
+		ring.Size = UDim2.fromScale(r[2] * 2 / self.Map.W, r[2] * 2 / self.Map.H)
+		ring.BackgroundColor3 = r[3]
+		ring.Stroke.Color = r[3]
+	end
+	for k = #list + 1, #self.rangeItems do self.rangeItems[k].Visible = false end
 end
 
 -- Aim preview for the two-click order: arrow from our nearest border to the target.

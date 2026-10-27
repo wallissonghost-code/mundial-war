@@ -29,15 +29,18 @@ function CombatService.cellCost(attackerId, cell, orderTroops, front)
 		cost = math.max(C.EnemyMinCost, density * C.DefenseDensityFactor)
 		defenderLoss = density * C.DefenderLossFactor
 		local Buildings = ctx.Buildings
-		if Buildings.covered(cell, "bunker", target) then cost = cost * B.bunker.defense end
-		if Buildings.covered(cell, "machinegun", target) then
-			cost = cost * (1 + math.min(1, (orderTroops or 0) / B.machinegun.massDefense))
+		local bunker = Buildings.covered(cell, "bunker", target, "defense")
+		if bunker then cost = cost * bunker end
+		local mg = Buildings.covered(cell, "machinegun", target, "maxFactor")
+		if mg then
+			cost = cost * (1 + math.min(mg - 1, (orderTroops or 0) / B.machinegun.massDefense))
 		end
 		if Map:distance(cell, defender.capital) <= C.CapitalRadius then cost = cost * C.CapitalDefense end
-		if Buildings.covered(cell, "artillery", attackerId) then cost = cost * B.artillery.support end
-		local tanks = Buildings.count(attackerId, "tankfactory")
-		if tanks > 0 then
-			cost = cost * math.max(B.tankfactory.attackFloor, 1 - B.tankfactory.attackBonus * tanks)
+		local support = Buildings.covered(cell, "artillery", attackerId, "support", true)
+		if support then cost = cost * support end
+		local attack = Buildings.totals(attackerId).attack
+		if attack > 0 then
+			cost = cost * math.max(B.tankfactory.attackFloor, 1 - attack)
 		end
 	end
 	if front and not ctx.Territory.isMainland(attackerId, front) then
@@ -56,16 +59,18 @@ function CombatService.tick(dt)
 	local B = Config.Buildings
 	for _, order in ipairs(ctx.Expansion.activeOrders()) do
 		if order.target > 0 and order.front then
-			if doTower and ctx.Buildings.covered(order.front, "tower", order.target) then
-				order.troops = order.troops * (1 - B.tower.attrition * pulseClock)
+			local attrition = doTower and ctx.Buildings.covered(order.front, "tower", order.target, "attrition")
+			if attrition then
+				order.troops = order.troops * (1 - attrition * pulseClock)
 			end
 			if doArtillery then
 				-- the defender's artillery, or an ally of the defender, shells the front
 				local shooters = ctx.Diplomacy.allies(order.target)
 				shooters[#shooters + 1] = order.target
 				for _, nid in ipairs(shooters) do
-					if nid ~= order.nation and ctx.Buildings.covered(order.front, "artillery", nid) then
-						order.troops = order.troops * (1 - B.artillery.damage)
+					local damage = nid ~= order.nation and ctx.Buildings.covered(order.front, "artillery", nid, "damage")
+					if damage then
+						order.troops = order.troops * (1 - damage)
 						break
 					end
 				end

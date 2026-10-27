@@ -2,9 +2,9 @@
 local ClientState = {}
 ClientState.__index = ClientState
 
-function ClientState.new(Map, Protocol, Config, Palette)
+function ClientState.new(Map, Protocol, Config, Palette, Stats)
 	local self = setmetatable({}, ClientState)
-	self.Map, self.Protocol, self.Config, self.Palette = Map, Protocol, Config, Palette
+	self.Map, self.Protocol, self.Config, self.Palette, self.Stats = Map, Protocol, Config, Palette, Stats
 	self.owner = {}
 	for i = 1, Map.N do self.owner[i] = Map.land[i] and 0 or -1 end
 	self.nations = {}          -- id -> { info + troops, land, labelCell, labelSize }
@@ -12,7 +12,7 @@ function ClientState.new(Map, Protocol, Config, Palette)
 	self.relations = {}        -- "a:b" -> kind
 	self.orders = {}           -- list { id, nation, target, troops, front, anchor, origin }
 	self.fleets = {}           -- id -> { id, nation, troops, path, speed, target, progress, t0 }
-	self.warships = {}
+	self.boats = {}           -- list { id, nation, x, y, health, patrolCell, level }
 	self.missiles = {}         -- id -> { id, kind, nation, from, to, speed, progress, t0 }
 	self.match = { phase = "waiting", round = 0, left = 0 }
 	self.matchAt = 0
@@ -58,7 +58,7 @@ function ClientState:applyInit(data)
 		self.nations[info.id] = info
 	end
 	self.buildings = {}
-	for _, b in ipairs(data.buildings) do self.buildings[b[1]] = { kind = b[2], owner = b[3] } end
+	for _, b in ipairs(data.buildings) do self.buildings[b[1]] = { kind = b[2], owner = b[3], level = b[4] or 1, off = b[5] == true } end
 	self.relations = {}
 	for _, r in ipairs(data.relations) do self.relations[key(r[1], r[2])] = r[3] end
 	self.orders = {}
@@ -67,7 +67,7 @@ function ClientState:applyInit(data)
 	for _, f in ipairs(data.fleets or {}) do
 		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = f[7], t0 = now }
 	end
-	self.warships = data.warships or {}
+	self.boats = data.boats or {}
 	self.missiles = {}
 	for _, m in ipairs(data.missiles or {}) do
 		self.missiles[m[1]] = { id = m[1], kind = m[2], nation = m[3], from = m[4], to = m[5], speed = m[6], progress = m[7], t0 = now }
@@ -92,7 +92,7 @@ function ClientState:applyDelta(data)
 	end
 	if data.b then
 		for _, b in ipairs(data.b) do
-			if b[2] then self.buildings[b[1]] = { kind = b[2], owner = b[3] } else self.buildings[b[1]] = nil end
+			if b[2] then self.buildings[b[1]] = { kind = b[2], owner = b[3], level = b[4] or 1, off = b[5] == true } else self.buildings[b[1]] = nil end
 		end
 		self:fire("buildings")
 	end
@@ -144,7 +144,7 @@ function ClientState:applyOrders(data)
 			if f then f.troops, f.progress, f.t0 = row[3], row[4], now end
 		end
 	end
-	if data.warships then self.warships = data.warships end
+	if data.boats then self.boats = data.boats end
 	if data.bots then self.botStates = data.bots end
 	self:fire("orders")
 end
@@ -181,6 +181,18 @@ end
 
 function ClientState:timeLeft()
 	return math.max(0, (self.match.left or 0) - (os.clock() - self.matchAt))
+end
+
+-- Own boat closest to map point (x, y) within `radius` cells, or nil.
+function ClientState:boatNear(nid, x, y, radius)
+	local best, bestD = nil, radius * radius
+	for _, b in ipairs(self.boats) do
+		if b[2] == nid then
+			local d = (b[3] - x) ^ 2 + (b[4] - y) ^ 2
+			if d <= bestD then best, bestD = b, d end
+		end
+	end
+	return best
 end
 
 -- Nearest cell of `nid` to `cell` that touches other land (arrow origin for an order).

@@ -81,13 +81,18 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 		return ctx.Buildings.build(nid, a, b)
 	elseif action == A.Warship then
 		if not isInt(a) or not Map:valid(a) then return false, "Célula inválida." end
-		return ctx.Naval.buyWarship(nid, a)
-	elseif action == A.Nuke then
+		return ctx.Naval.buyBoat(nid, a)
+	elseif action == A.Patrol then
+		if not isInt(a) or not isInt(b) or not Map:valid(b) then return false, "Ponto inválido." end
+		return ctx.Naval.patrol(nid, a, b)
+	elseif action == A.Upgrade then
+		if not isInt(a) or not Map:valid(a) then return false, "Célula inválida." end
+		return ctx.Buildings.upgrade(nid, a)
+	elseif action == A.Weapon or action == A.Nuke or action == A.Airstrike then
 		if not isInt(a) or not Map:valid(a) then return false, "Alvo inválido." end
-		return ctx.Strategic.launchNuke(nid, a)
-	elseif action == A.Airstrike then
-		if not isInt(a) or not Map:valid(a) then return false, "Alvo inválido." end
-		return ctx.Strategic.launchAirstrike(nid, a)
+		local kind = action == A.Nuke and "atomic" or action == A.Airstrike and "airstrike" or b
+		if type(kind) ~= "string" or not Config.Weapons[kind] then return false, "Arma inválida." end
+		return ctx.Strategic.launch(nid, a, kind)
 	elseif action == A.Ally or action == A.Decline or action == A.BreakAlliance or action == A.War then
 		if not isInt(a) or not ctx.Nations.get(a) or a == nid then return false, "Nação inválida." end
 		if action == A.Ally then return ctx.Diplomacy.requestAlliance(nid, a) end

@@ -14,6 +14,7 @@ function World.new(deps)
 	local ctx = {
 		Config = deps.Config, Palette = deps.Palette, Protocol = deps.Protocol,
 		Map = deps.Map or deps.MapGrid.new(deps.MapData),
+		Stats = deps.BuildingStats,
 		random = deps.random or math.random,
 		outbox = {},
 		fullResync = false,
@@ -70,6 +71,7 @@ function World:step(dt, humanCount, clock)
 		ctx.Combat.tick(T.Simulation)
 		ctx.Naval.tick(T.Simulation)
 		ctx.Strategic.tick(T.Simulation)
+		ctx.Buildings.tick()
 		ctx.Bots.tick()
 	end
 	if t.econ >= T.Economy then
@@ -125,14 +127,14 @@ function World:initPayload(userId)
 		if n.alive then nations[#nations + 1] = ctx.Nations.publicInfo(n) end
 	end
 	local you = ctx.Nations.forUser(userId)
-	local fleets, warships = ctx.Naval.snapshot()
+	local fleets, boats = ctx.Naval.snapshot()
 	return {
 		k = ctx.Protocol.Events.Init,
 		owners = ctx.Territory.snapshotRuns(),
 		nations = nations,
 		buildings = ctx.Buildings.snapshot(),
 		relations = ctx.Diplomacy.snapshot(),
-		fleets = fleets, warships = warships,
+		fleets = fleets, boats = boats,
 		missiles = ctx.Strategic.snapshot(),
 		match = ctx.Match.publicView(),
 		you = you and you.alive and you.id or nil,
@@ -163,12 +165,11 @@ end
 
 function World:ordersPayload()
 	local ctx = self.ctx
-	local _, warships = ctx.Naval.snapshot()
 	local payload = {
 		k = ctx.Protocol.Events.Orders,
 		orders = ctx.Expansion.publicView(),
 		fleets = ctx.Naval.publicView(),
-		warships = warships,
+		boats = ctx.Naval.boatView(),
 	}
 	if ctx.Config.DEBUG_MODE then payload.bots = ctx.Bots.debugView() end
 	return payload

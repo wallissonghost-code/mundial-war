@@ -1,4 +1,5 @@
--- Mundial War · nuclear missiles (silo) and air strikes (air base), intercepted by air defence.
+-- Mundial War · strategic weapons (air strike, cluster, EMP, atomic, hydrogen), fired from
+-- air bases or silos and possibly intercepted by air defence.
 local StrategicService = {}
 
 local ctx, Config, Map, Territory
@@ -20,72 +21,66 @@ function StrategicService.missiles()
 	return missiles
 end
 
-local function pickLauncher(nid, kind, target, range)
+-- Nearest ready launcher of the right kind (and level) that reaches the target.
+local function pickLauncher(nid, weapon, target)
 	local best, bestD = nil, math.huge
 	local now = ctx.now()
-	local anyReady = false
-	for _, b in ipairs(ctx.Buildings.ofKind(nid, kind)) do
-		if b.readyAt <= now then
-			anyReady = true
+	local why = "Aguarde a recarga do lançador."
+	for _, b in ipairs(ctx.Buildings.ofKind(nid, weapon.launcher)) do
+		if not b.active then
+			why = "Seu lançador está desligado por um EMP."
+		elseif weapon.minLevel and b.level < weapon.minLevel then
+			why = "Requer " .. Config.Buildings[weapon.launcher].name .. " nível " .. weapon.minLevel .. "."
+		elseif b.readyAt <= now then
 			local d = Map:distance(b.cell, target)
-			if (not range or d <= range) and d < bestD then best, bestD = b, d end
+			local range = ctx.Buildings.stat(b, "range")
+			if range and d > range then
+				why = "Alvo fora do alcance da base aérea (" .. math.floor(range) .. " células)."
+			elseif d < bestD then
+				best, bestD = b, d
+			end
 		end
 	end
-	return best, bestD, anyReady
+	return best, bestD, why
 end
 
-local function validTarget(nid, cell)
+function StrategicService.launch(nid, cell, kind)
+	local weapon = Config.Weapons[kind]
+	local n = ctx.Nations.get(nid)
+	if not weapon then return false, "Arma inválida." end
+	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
+	if not n or not n.alive then return false, "Você não tem nação." end
 	if not Map:valid(cell) then return false, "Alvo inválido." end
 	local owner = Territory.ownerOf(cell)
 	if owner == nid then return false, "Esse alvo é seu." end
 	if owner > 0 and ctx.Diplomacy.allied(nid, owner) then return false, "Não é possível atacar um aliado." end
-	return true, owner
-end
-
-local function launch(nid, kind, cell)
-	local S = Config.Strategic
-	local n = ctx.Nations.get(nid)
-	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
-	if not n or not n.alive then return false, "Você não tem nação." end
-	local ok, ownerOrWhy = validTarget(nid, cell)
-	if not ok then return false, ownerOrWhy end
-	local owner = ownerOrWhy
-	local isNuke = kind == "nuke"
-	local launcherKind = isNuke and "silo" or "airfield"
-	local gold = isNuke and S.NukeGold or S.AirstrikeGold
-	if ctx.Buildings.count(nid, launcherKind) <= 0 then
-		return false, "Requer " .. Config.Buildings[launcherKind].name .. "."
+	if kind == "airstrike" and owner <= 0 then return false, "Ataque aéreo precisa de um alvo inimigo." end
+	if ctx.Buildings.count(nid, weapon.launcher) <= 0 then
+		return false, "Requer " .. Config.Buildings[weapon.launcher].name .. "."
 	end
-	if not isNuke and owner <= 0 then return false, "Bombardeio aéreo precisa de um alvo inimigo." end
-	local launcher, distance, anyReady = pickLauncher(nid, launcherKind, cell, (not isNuke) and Config.Buildings.airfield.range or nil)
-	if not launcher then
-		if anyReady then return false, "Alvo fora do alcance da base aérea." end
-		return false, "Aguarde a recarga do lançador."
-	end
-	if n.gold < gold then return false, "Custa " .. gold .. " de ouro." end
-	n.gold = n.gold - gold
-	launcher.readyAt = ctx.now() + (isNuke and S.NukeCooldown or S.AirstrikeCooldown)
+	local launcher, distance, why = pickLauncher(nid, weapon, cell)
+	if not launcher then return false, why end
+	if n.gold < weapon.gold then return false, weapon.name .. " custa " .. weapon.gold .. " de ouro." end
+	n.gold = n.gold - weapon.gold
+	local factor = ctx.Buildings.stat(launcher, "cooldownFactor") or 1
+	launcher.readyAt = ctx.now() + weapon.cooldown * factor
 	if owner > 0 then ctx.Diplomacy.ensureWar(nid, owner) end
 	local m = {
 		id = nextId, kind = kind, nation = nid, from = launcher.cell, to = cell,
-		progress = 0, distance = math.max(1, distance), speed = isNuke and S.NukeSpeed or S.AirstrikeSpeed,
+		progress = 0, distance = math.max(1, distance), speed = weapon.speed,
 	}
 	nextId = nextId + 1
 	missiles[#missiles + 1] = m
 	ctx.emit(nil, { k = ctx.Protocol.Events.Impact, launch = { m.id, kind, nid, m.from, m.to, m.speed } })
 	if owner > 0 then
-		ctx.notify(owner, (isNuke and "☢ Míssil nuclear" or "✈ Ataque aéreo") .. " de " .. n.name .. " a caminho!", "war")
+		ctx.notify(owner, weapon.icon .. " " .. weapon.name .. " de " .. n.name .. " a caminho!", "war")
 	end
-	return true, isNuke and "Míssil nuclear lançado." or "Ataque aéreo a caminho."
+	return true, weapon.name .. " lançada."
 end
 
-function StrategicService.launchNuke(nid, cell)
-	return launch(nid, "nuke", cell)
-end
-
-function StrategicService.launchAirstrike(nid, cell)
-	return launch(nid, "airstrike", cell)
-end
+-- Kept for older callers: the atomic bomb and the air strike.
+function StrategicService.launchNuke(nid, cell) return StrategicService.launch(nid, cell, "atomic") end
+function StrategicService.launchAirstrike(nid, cell) return StrategicService.launch(nid, cell, "airstrike") end
 
 local function intercepted(m)
 	local owner = Territory.ownerOf(m.to)
@@ -94,11 +89,13 @@ local function intercepted(m)
 	defenders[#defenders + 1] = owner
 	local isDefender = {}
 	for _, d in ipairs(defenders) do isDefender[d] = true end
-	local def = Config.Buildings.airdefense
 	local hit = false
-	ctx.Buildings.near(m.to, def.radius, function(b)
-		if b.kind == "airdefense" and isDefender[b.owner] and b.owner ~= m.nation then
-			if ctx.random() < def.intercept then
+	local tx, ty = Map:xy(m.to)
+	ctx.Buildings.near(m.to, ctx.Stats.maxStat(Config, "airdefense", "radius"), function(b)
+		if b.kind == "airdefense" and b.active and isDefender[b.owner] and b.owner ~= m.nation then
+			local r = ctx.Buildings.stat(b, "radius")
+			local bx, by = Map:xy(b.cell)
+			if (bx - tx) ^ 2 + (by - ty) ^ 2 <= r * r and ctx.random() < ctx.Buildings.stat(b, "intercept") then
 				hit = true
 				return true
 			end
@@ -108,44 +105,52 @@ local function intercepted(m)
 end
 
 local function impact(m)
-	local S = Config.Strategic
-	local radius = m.kind == "nuke" and S.NukeRadius or S.AirstrikeRadius
-	local destroyed = {}
+	local w = Config.Weapons[m.kind]
+	local radius = w.radius
+	-- structures
+	local struck = {}
 	ctx.Buildings.near(m.to, radius, function(b)
-		if b.owner ~= m.nation and not ctx.Diplomacy.allied(m.nation, b.owner) then
-			destroyed[#destroyed + 1] = b.cell
-		end
+		if b.owner ~= m.nation and not ctx.Diplomacy.allied(m.nation, b.owner) then struck[#struck + 1] = b.cell end
 	end)
-	for _, cell in ipairs(destroyed) do ctx.Buildings.destroy(cell) end
-	if m.kind == "nuke" then
-		local hits = {}
-		local fallout = {}
-		Map:disc(m.to, S.NukeRadius, function(i)
+	for _, cell in ipairs(struck) do
+		if w.destroys then
+			ctx.Buildings.destroy(cell)
+		elseif w.disable then
+			ctx.Buildings.disable(cell, ctx.now() + w.disable)
+		end
+	end
+	-- troops
+	if w.troopKill then
+		local hits, fallout = {}, {}
+		Map:disc(m.to, radius, function(i)
 			local o = Territory.ownerOf(i)
-			if o > 0 and o ~= m.nation then
+			if o > 0 and o ~= m.nation and not ctx.Diplomacy.allied(m.nation, o) then
 				hits[o] = (hits[o] or 0) + 1
-				if Map:distance(i, m.to) <= S.NukeFalloutRadius then fallout[#fallout + 1] = i end
+				if w.fallout and Map:distance(i, m.to) <= w.fallout then fallout[#fallout + 1] = i end
 			end
 		end)
 		for o, count in pairs(hits) do
 			local victim = ctx.Nations.get(o)
 			if victim then
 				local density = victim.troops / math.max(1, victim.land)
-				victim.troops = math.max(0, victim.troops - density * count * 2)
-				ctx.notify(o, "☢ Ataque nuclear em seu território!", "war")
+				victim.troops = math.max(0, victim.troops - density * count * w.troopKill)
+				ctx.notify(o, w.icon .. " " .. w.name .. " atingiu seu território!", "war")
 			end
 		end
 		for _, i in ipairs(fallout) do Territory.setOwner(i, 0) end
-		-- fronts passing through the blast are wiped out
 		for _, o in ipairs(ctx.Expansion.activeOrders()) do
-			if o.front and o.nation ~= m.nation and Map:distance(o.front, m.to) <= S.NukeRadius then
-				o.troops = o.troops * 0.2
+			if o.front and o.nation ~= m.nation and Map:distance(o.front, m.to) <= radius then
+				o.troops = o.troops * (w.fallout and 0.2 or 0.5)
 			end
 		end
-	else
+	elseif w.troopShare then
 		local o = Territory.ownerOf(m.to)
 		local victim = o > 0 and ctx.Nations.get(o)
-		if victim then victim.troops = victim.troops * (1 - S.AirstrikeTroopDamage) end
+		if victim then victim.troops = victim.troops * (1 - w.troopShare) end
+	end
+	if w.disable then
+		local o = Territory.ownerOf(m.to)
+		if o > 0 then ctx.notify(o, "⚡ EMP: construções desligadas por " .. w.disable .. " s.", "war") end
 	end
 end
 

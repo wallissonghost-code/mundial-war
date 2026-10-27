@@ -272,3 +272,91 @@ do
 	ok(Cmd(ctx, 1, "target", ctx.Map:index(6, 2), 0.5), "free land on our side still works")
 	print("PASS land route required")
 end
+
+-- Levels, defence boats and new bombs ---------------------------------------------------------
+do
+	local fast = H.configWith({ Bots = { Nations = 0, Tribes = 0 }, Spawn = { MinCapitalDistance = 8 }, Network = { CommandsPerSecond = 1000, CommandBurst = 1000 } })
+	local world, ctx = H.newWorld({ mapData = map, Config = fast })
+	world:step(0.1, 1)
+	Cmd(ctx, 1, "spawn", cell(ctx, 28, 5))
+	Cmd(ctx, 2, "spawn", cell(ctx, 40, 5))
+	ctx.Match.startPlaying()
+	local a, b = ctx.Nations.forUser(1), ctx.Nations.forUser(2)
+	a.gold, b.gold, a.troops, b.troops = 1e6, 1e6, 50000, 50000
+	local S = H.BuildingStats
+	-- upgrades
+	ok(Cmd(ctx, 1, "build", cell(ctx, 27, 4), "bunker"), "bunker")
+	local bunker = ctx.Buildings.at(cell(ctx, 27, 4))
+	local r1 = ctx.Buildings.stat(bunker, "radius")
+	local gold0 = a.gold
+	ok(Cmd(ctx, 1, "upgrade", cell(ctx, 27, 4)), "upgrade to level 2")
+	ok(bunker.level == 2 and ctx.Buildings.stat(bunker, "radius") > r1, "level raises reach")
+	ok(gold0 - a.gold == S.upgradeCost(ctx.Config, "bunker", 1), "upgrade cost charged")
+	for _ = 1, 3 do Cmd(ctx, 1, "upgrade", cell(ctx, 27, 4)) end
+	ok(bunker.level == ctx.Config.MaxBuildingLevel, "max level")
+	ok(not Cmd(ctx, 1, "upgrade", cell(ctx, 27, 4)), "no upgrade past max")
+	ok(not Cmd(ctx, 2, "upgrade", cell(ctx, 27, 4)), "cannot upgrade someone else's")
+	local lines = S.lines(ctx.Config, "bunker", 5)
+	ok(lines[1]:find("Alcance"), "description lists the reach: " .. lines[1])
+	-- city levels feed the economy
+	ok(Cmd(ctx, 1, "build", cell(ctx, 28, 7), "city"), "city")
+	local g1 = ctx.Buildings.totals(a.id).growth
+	Cmd(ctx, 1, "upgrade", cell(ctx, 28, 7))
+	ok(ctx.Buildings.totals(a.id).growth > g1, "upgraded city grows faster")
+	-- defence boats
+	ok(Cmd(ctx, 1, "build", cell(ctx, 30, 5), "port"), "port A")
+	for x = 36, 39 do ctx.Territory.setOwner(cell(ctx, x, 5), b.id) end
+	ok(Cmd(ctx, 2, "build", cell(ctx, 36, 5), "port"), "port B")
+	ok(Cmd(ctx, 1, "warship", cell(ctx, 30, 5)), "boat A")
+	ok(Cmd(ctx, 2, "warship", cell(ctx, 36, 5)), "boat B")
+	ok(Cmd(ctx, 1, "warship", cell(ctx, 30, 5)), "second boat A")
+	ok(not Cmd(ctx, 1, "warship", cell(ctx, 30, 5)), "port limit")
+	local boats = ctx.Naval.boats()
+	ok(#boats == 3, "three boats")
+	ok(not Cmd(ctx, 1, "patrol", boats[1].id, cell(ctx, 10, 5)), "patrol on land refused")
+	ok(not Cmd(ctx, 2, "patrol", boats[1].id, cell(ctx, 33, 5)), "cannot command another nation's boat")
+	ok(Cmd(ctx, 1, "patrol", boats[1].id, cell(ctx, 33, 6)), "patrol set")
+	-- at war, boats fight and raid gold from the enemy port
+	ctx.Diplomacy.declareWar(a.id, b.id)
+	local bGold = b.gold
+	H.run(world, 12, 1)
+	local alive = {}
+	for _, boat in ipairs(ctx.Naval.boats()) do alive[boat.nation] = (alive[boat.nation] or 0) + 1 end
+	ok((alive[b.id] or 0) == 0 and (alive[a.id] or 0) >= 1, "two boats sink one")
+	ok(b.gold < bGold + 12 * 100, "enemy port raided")
+	-- bombs
+	local function spot(nation, kind)
+		for i in pairs(ctx.Territory.owned(nation.id)) do
+			if ctx.Buildings.canBuild(nation.id, i, kind) then return i end
+		end
+		ctx.Nations.get(nation.id).troops = 1e6
+	end
+	a.troops = 1e6
+	Cmd(ctx, 1, "target", cell(ctx, 12, 5), 0.3)
+	H.run(world, 4, 1)
+	ok(not Cmd(ctx, 1, "weapon", cell(ctx, 40, 5), "cluster"), "cluster needs an air base")
+	ok(Cmd(ctx, 1, "build", spot(a, "airfield"), "airfield"), "air base")
+	local troops = b.troops
+	ok(Cmd(ctx, 1, "weapon", cell(ctx, 40, 5), "cluster"), "cluster launched")
+	H.run(world, 1.5, 1)
+	ok(b.troops < troops, "cluster kills troops")
+	ok(Cmd(ctx, 1, "build", spot(a, "factory"), "factory"), "factory")
+	local siloCell = spot(a, "silo")
+	local okSilo, msgSilo = Cmd(ctx, 1, "build", siloCell, "silo")
+	ok(okSilo, "silo: " .. tostring(msgSilo) .. " " .. tostring(siloCell))
+	ok(not Cmd(ctx, 1, "weapon", cell(ctx, 40, 5), "hydrogen"), "hydrogen needs silo level 3")
+	local bCity = spot(b, "city")
+	ok(Cmd(ctx, 2, "build", bCity, "city"), "enemy city")
+	ok(Cmd(ctx, 1, "weapon", bCity, "emp"), "EMP launched")
+	H.run(world, 1.5, 1)
+	local hit = ctx.Buildings.at(bCity)
+	ok(hit and not hit.active, "EMP switches buildings off")
+	H.run(world, 46, 1)
+	ok(hit.active, "and they come back")
+	Cmd(ctx, 1, "upgrade", siloCell) Cmd(ctx, 1, "upgrade", siloCell)
+	H.run(world, 15, 1)
+	local okH, msgH = Cmd(ctx, 1, "weapon", cell(ctx, 40, 5), "hydrogen")
+	ok(okH, "hydrogen at silo level 3: " .. tostring(msgH))
+	ok(not Cmd(ctx, 1, "weapon", cell(ctx, 40, 5), "rocket"), "unknown weapon")
+	print("PASS building levels, defence boats and new bombs")
+end

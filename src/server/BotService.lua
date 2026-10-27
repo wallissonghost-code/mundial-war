@@ -169,6 +169,26 @@ local function tryBuild(n, b, attacked)
 			end
 		end
 	end
+	-- rich bots improve what they have, and coastal ones keep a defence boat
+	if n.kind == "bot" then
+		if Buildings.count(n.id, "port") > 0 and n.gold > Config.Naval.BoatGold * 3 and #ctx.Naval.boats() < 400 then
+			local mine = 0
+			for _, boat in ipairs(ctx.Naval.boats()) do if boat.nation == n.id then mine = mine + 1 end end
+			if mine < 1 + math.floor(n.land / 1500) then
+				local port = Buildings.ofKind(n.id, "port")[1]
+				if ctx.Naval.buyBoat(n.id, port.cell) then return true end
+			end
+		end
+		for _, kind in ipairs({ "city", "factory", "bunker", "airdefense", "port" }) do
+			for _, building in ipairs(Buildings.ofKind(n.id, kind)) do
+				local cost = Buildings.upgradeCost(building)
+				if cost and n.gold > cost * 2.5 then
+					Buildings.upgrade(n.id, building.cell)
+					return true
+				end
+			end
+		end
+	end
 	return false
 end
 

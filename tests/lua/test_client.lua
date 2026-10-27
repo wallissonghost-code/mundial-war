@@ -114,13 +114,11 @@ do
 	run(26)
 	ok(texts(gui):find("👥"), "player card shows troops")
 
-	-- two-click expansion to the west
+	-- one click starts the expansion to the west
 	local tx, ty = screenOf(home - 25)
 	click(tx, ty)
-	ok(texts(gui):find("Clique de novo"), "aim preview after first click")
-	click(tx + 1, ty)
 	run(0.5)
-	ok(texts(gui):find("Avanço iniciado"), "order confirmed by the second click: " .. texts(gui):sub(1, 400))
+	ok(texts(gui):find("Avanço iniciado"), "order started by a single click: " .. texts(gui):sub(1, 400))
 	local writes = M.pixelWrites
 	run(4)
 	ok(M.pixelWrites > writes, "territory deltas repainted")
@@ -139,17 +137,29 @@ do
 	M.keysDown[Enum.KeyCode.D] = true
 	run(0.3)
 	M.keysDown[Enum.KeyCode.D] = nil
+	run(40) -- earn gold for a city and its upgrade
 	-- build tray: select a city and place it inside our territory
 	for _, b in ipairs(find(gui, function(c) return c.ClassName == "TextButton" and rawget(c, "_props").Text == "🏗" end)) do b.Activated:Fire() end
 	run(0.3)
 	ok(texts(gui):find("Cidade"), "build tray lists buildings")
-	for _, b in ipairs(find(gui, function(c) return c.ClassName == "TextButton" and (rawget(c, "_props").Text or ""):find("Cidade") end)) do b.Activated:Fire() end
+	local cityButtons = find(gui, function(c) return c.ClassName == "TextButton" and (rawget(c, "_props").Text or ""):find("Cidade") end)
+	for _, b in ipairs(cityButtons) do b.Activated:Fire() end
 	M.services.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.F, Position = { X = 0, Y = 0, Z = 0 } }, false)
-	run(0.1)
+	run(0.3)
 	click(sx, sy)
 	run(0.5)
-	ok(texts(gui):find("Cidade construída") or texts(gui):find("Muito perto") or texts(gui):find("Ouro"), "build command answered")
+	ok(texts(gui.MundialWar.Notices):find("Construção pronta: Cidade"), "city built: " .. texts(gui.MundialWar.Notices))
 	M.services.UserInputService.InputBegan:Fire({ UserInputType = Enum.UserInputType.Keyboard, KeyCode = Enum.KeyCode.Escape, Position = { X = 0, Y = 0, Z = 0 } }, false)
+	run(0.2)
+	do
+		click(sx, sy)
+		ok(texts(gui):find("Nível 1") and texts(gui):find("Alcance") == nil, "building popover with level")
+		local up = find(gui, function(c) return c.ClassName == "TextButton" and (rawget(c, "_props").Text or ""):find("Melhorar") end)
+		ok(#up == 1, "upgrade button")
+		up[1].Activated:Fire()
+		run(0.5)
+		ok(texts(gui):find("nível 2"), "upgrade confirmed")
+	end
 
 	-- right click on a bot opens diplomacy
 	local Map = assert(loadfile("src/shared/MapGrid.lua"))().new(MapData)

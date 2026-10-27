@@ -1,5 +1,87 @@
 <?xml version='1.0' encoding='utf-8'?>
-<roblox version="4"><External>null</External><External>nil</External><Item class="Workspace" referent="RBX00000001"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Players" referent="RBX00000002"><Properties><string name="Name">Players</string><bool name="CharacterAutoLoads">false</bool></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000003"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000004"><Properties><string name="Name">MundialWarShared</string></Properties><Item class="ModuleScript" referent="RBX00000005"><Properties><string name="Name">GameConfig</string><ProtectedString name="Source">-- Mundial War · central balance and feature configuration.
+<roblox version="4"><External>null</External><External>nil</External><Item class="Workspace" referent="RBX00000001"><Properties><string name="Name">Workspace</string><bool name="StreamingEnabled">false</bool></Properties></Item><Item class="Players" referent="RBX00000002"><Properties><string name="Name">Players</string><bool name="CharacterAutoLoads">false</bool></Properties></Item><Item class="ReplicatedStorage" referent="RBX00000003"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000004"><Properties><string name="Name">MundialWarShared</string></Properties><Item class="ModuleScript" referent="RBX00000005"><Properties><string name="Name">BuildingStats</string><ProtectedString name="Source">-- Mundial War · building numbers per level, shared by server rules and both clients.
+local BuildingStats = {}
+
+-- Value of `field` for a building of `kind` at `level` (1-based).
+function BuildingStats.stat(Config, kind, level, field)
+	local def = Config.Buildings[kind]
+	local base = def and def[field]
+	if base == nil then return nil end
+	local inc = def.perLevel and def.perLevel[field] or 0
+	local v = base + inc * ((level or 1) - 1)
+	if field == "intercept" then v = math.min(0.95, v) end
+	if field == "support" then v = math.max(0.4, v) end
+	if field == "cooldownFactor" then v = math.max(0.4, v) end
+	return v
+end
+
+function BuildingStats.maxStat(Config, kind, field)
+	return BuildingStats.stat(Config, kind, Config.MaxBuildingLevel, field)
+end
+
+-- Gold to go from `level` to `level + 1`, or nil at the top level.
+function BuildingStats.upgradeCost(Config, kind, level)
+	if level &gt;= Config.MaxBuildingLevel then return nil end
+	return math.floor(Config.Buildings[kind].cost * Config.UpgradeCostFactor * level)
+end
+
+local function num(v)
+	if math.abs(v - math.floor(v)) &lt; 1e-6 then
+		local s = tostring(math.floor(v))
+		-- thousands separator for readability
+		local out = s:reverse():gsub("(%d%d%d)", "%1."):reverse()
+		if out:sub(1, 1) == "." then out = out:sub(2) end
+		return out
+	end
+	return (string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", ""):gsub("%.", ","))
+end
+
+local function pct(v) return num(v * 100) .. "%" end
+
+-- Effect lines (Portuguese) for the building at `level`.
+function BuildingStats.lines(Config, kind, level)
+	local s = function(f) return BuildingStats.stat(Config, kind, level, f) end
+	local out = {}
+	if kind == "city" then
+		out[#out + 1] = "+" .. num(s("growth")) .. " tropas/s"
+		out[#out + 1] = "+" .. num(s("capacity")) .. " capacidade"
+		out[#out + 1] = "+" .. num(s("gold")) .. " ouro/s"
+	elseif kind == "factory" then
+		out[#out + 1] = "+" .. num(s("gold")) .. " ouro/s"
+	elseif kind == "port" then
+		out[#out + 1] = "+" .. num(s("gold")) .. " ouro/s"
+		out[#out + 1] = "Até " .. num(s("boats")) .. " barcos de defesa"
+	elseif kind == "bunker" then
+		out[#out + 1] = "Ataques custam ×" .. num(s("defense"))
+	elseif kind == "tower" then
+		out[#out + 1] = "Frentes inimigas perdem " .. pct(s("attrition")) .. "/s"
+	elseif kind == "machinegun" then
+		out[#out + 1] = "Ataques grandes custam até ×" .. num(s("maxFactor"))
+	elseif kind == "artillery" then
+		out[#out + 1] = "Frentes inimigas perdem " .. pct(s("damage")) .. " a cada " .. num(s("interval")) .. " s"
+		out[#out + 1] = "Seus ataques ali custam ×" .. num(s("support"))
+	elseif kind == "tankfactory" then
+		out[#out + 1] = "Ataques custam −" .. pct(s("attackBonus"))
+	elseif kind == "airfield" then
+		out[#out + 1] = "Alcance dos aviões: " .. num(s("range")) .. " células"
+	elseif kind == "airdefense" then
+		out[#out + 1] = pct(s("intercept")) .. " de chance de interceptar"
+	elseif kind == "silo" then
+		out[#out + 1] = "Recarga ×" .. num(s("cooldownFactor"))
+		if level &gt;= 3 then out[#out + 1] = "Libera bomba de hidrogênio" end
+	end
+	local r = s("radius")
+	if r then table.insert(out, 1, "Alcance: " .. num(r) .. " células") end
+	return out
+end
+
+-- Radius drawn on the map for a building (defence reach, or aircraft range for an air base).
+function BuildingStats.reach(Config, kind, level)
+	return BuildingStats.stat(Config, kind, level, "radius") or BuildingStats.stat(Config, kind, level, "range")
+end
+
+return BuildingStats
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000006"><Properties><string name="Name">GameConfig</string><ProtectedString name="Source">-- Mundial War · central balance and feature configuration.
 -- Every gameplay number lives here; services must not hard-code tuning values.
 local GameConfig = {}
 
@@ -89,32 +171,47 @@ GameConfig.Combat = {
 }
 
 -- Buildings ----------------------------------------------------------------
--- cost grows with each building of the same kind owned: cost*(1+CostGrowth*count)
+-- Cost of a new building grows with each one of the same kind owned: cost*(1+CostGrowth*count).
+-- Every building can be upgraded to MaxBuildingLevel; level L -&gt; L+1 costs cost*UpgradeCostFactor*L.
+-- Each stat grows by perLevel[stat] per level above 1 (see shared/BuildingStats.lua).
 GameConfig.CostGrowth = 0.35
 GameConfig.MinBuildingSpacing = 2      -- cells between any two buildings
+GameConfig.MaxBuildingLevel = 5
+GameConfig.UpgradeCostFactor = 0.6
 GameConfig.Buildings = {
 	city = { name = "Cidade", icon = "🏙", cost = 1000, growth = 25, capacity = 15000, gold = 3,
-		description = "+25 tropas/s, +15.000 capacidade, +3 ouro/s" },
+		perLevel = { growth = 15, capacity = 10000, gold = 3 },
+		purpose = "Aumenta a população: mais tropas por segundo, mais capacidade e um pouco de ouro." },
 	factory = { name = "Fábrica", icon = "🏭", cost = 1500, gold = 25,
-		description = "+25 ouro/s; libera tanques e silo" },
-	port = { name = "Porto", icon = "⚓", cost = 1200, gold = 6, coastal = true,
-		description = "Litoral. Frotas de invasão e navios de guerra" },
-	bunker = { name = "Bunker", icon = "🛡", cost = 600, radius = 5, defense = 1.8,
-		description = "Ataques num raio de 5 custam ×1,8" },
-	tower = { name = "Torre de sniper", icon = "🎯", cost = 900, radius = 9, attrition = 0.015,
-		description = "Frentes inimigas num raio de 9 perdem 1,5% por segundo" },
-	machinegun = { name = "Metralhadora", icon = "🔫", cost = 1100, radius = 6, massDefense = 15000,
-		description = "Ataques grandes num raio de 6 custam até ×2" },
-	artillery = { name = "Artilharia", icon = "💥", cost = 1800, radius = 14, interval = 2, damage = 0.03, support = 0.8,
-		description = "Bombardeia frentes inimigas (raio 14); seus ataques ali custam ×0,8" },
+		perLevel = { gold = 18 },
+		purpose = "Gera ouro e libera a fábrica de tanques e o silo." },
+	port = { name = "Porto", icon = "⚓", cost = 1200, gold = 6, coastal = true, boats = 2,
+		perLevel = { gold = 5, boats = 1 },
+		purpose = "Só no litoral. Envia frotas de invasão pelo mar e constrói barcos de defesa." },
+	bunker = { name = "Bunker", icon = "🛡", cost = 600, radius = 5, defense = 1.8, defensive = true,
+		perLevel = { radius = 1, defense = 0.25 },
+		purpose = "Fortifica a região: ataques inimigos dentro do alcance custam mais tropas." },
+	tower = { name = "Torre de sniper", icon = "🎯", cost = 900, radius = 9, attrition = 0.015, defensive = true,
+		perLevel = { radius = 1.5, attrition = 0.006 },
+		purpose = "Desgasta as frentes inimigas que avançam dentro do alcance, a cada segundo." },
+	machinegun = { name = "Metralhadora", icon = "🔫", cost = 1100, radius = 6, massDefense = 15000, maxFactor = 2, defensive = true,
+		perLevel = { radius = 1, maxFactor = 0.25 },
+		purpose = "Contra grandes exércitos: quanto maior o ataque no alcance, mais caro fica." },
+	artillery = { name = "Artilharia", icon = "💥", cost = 1800, radius = 14, interval = 2, damage = 0.03, support = 0.8, defensive = true,
+		perLevel = { radius = 2, damage = 0.01, support = -0.04 },
+		purpose = "Bombardeia frentes inimigas no alcance e barateia seus próprios ataques ali." },
 	tankfactory = { name = "Fábrica de tanques", icon = "🚜", cost = 2500, requires = "factory", attackBonus = 0.08, attackFloor = 0.6,
-		description = "-8% no custo de ataque (mín. ×0,6)" },
+		perLevel = { attackBonus = 0.03 },
+		purpose = "Blindados: todos os seus ataques custam menos tropas (mínimo ×0,6 somando todas)." },
 	airfield = { name = "Base aérea", icon = "✈", cost = 3000, range = 90,
-		description = "Libera bombardeio aéreo até 90 células" },
-	airdefense = { name = "Defesa antiaérea", icon = "📡", cost = 2000, radius = 14, intercept = 0.6,
-		description = "60% de chance de interceptar mísseis e aviões num raio de 14" },
-	silo = { name = "Silo nuclear", icon = "☢", cost = 6000, requires = "factory",
-		description = "Permite lançar armas nucleares" },
+		perLevel = { range = 20 },
+		purpose = "Lança ataques aéreos e bombas de fragmentação dentro do alcance." },
+	airdefense = { name = "Defesa antiaérea", icon = "📡", cost = 2000, radius = 14, intercept = 0.6, defensive = true,
+		perLevel = { radius = 2, intercept = 0.08 },
+		purpose = "Pode derrubar mísseis e aviões inimigos que caiam dentro do alcance." },
+	silo = { name = "Silo de mísseis", icon = "🚀", cost = 6000, requires = "factory", cooldownFactor = 1,
+		perLevel = { cooldownFactor = -0.12 },
+		purpose = "Lança bombas EMP, atômicas e, a partir do nível 3, de hidrogênio. Cada nível recarrega mais rápido." },
 }
 GameConfig.BuildingOrder = { "city", "factory", "port", "bunker", "tower", "machinegun", "artillery", "tankfactory", "airfield", "airdefense", "silo" }
 
@@ -124,25 +221,37 @@ GameConfig.Naval = {
 	MinTroops = 100,
 	MaxFleetsPerNation = 3,
 	Speed = 14,                        -- water cells per second
-	WarshipGold = 1500,
-	WarshipsPerPort = 2,
-	WarshipRadius = 10,
-	WarshipDamagePerSecond = 0.08,     -- share of a passing enemy transport destroyed per second
+	-- Defence boat: bought at a port, patrols around a point you choose on the water
+	BoatGold = 1500,
+	BoatHealth = 100,
+	BoatSpeed = 9,                     -- cells per second
+	BoatRange = 9,                     -- weapons reach (+1 per level of its port)
+	BoatOrbit = 3,                     -- patrol circle around the chosen point
+	BoatDamage = 14,                   -- health per second against enemy boats (+4 per port level)
+	BoatTransportDamage = 0.1,         -- share of a passing enemy transport destroyed per second
+	BoatGoldSteal = 10,                -- gold per second taken from each enemy port in reach
 }
 
 -- Strategic weapons --------------------------------------------------------------
-GameConfig.Strategic = {
-	NukeGold = 8000,
-	NukeCooldown = 90,                 -- per silo
-	NukeSpeed = 30,                    -- cells per second
-	NukeRadius = 10,                   -- buildings destroyed, troops killed
-	NukeFalloutRadius = 6,             -- cells become neutral
-	AirstrikeGold = 1200,
-	AirstrikeCooldown = 30,            -- per airfield
-	AirstrikeSpeed = 45,
-	AirstrikeRadius = 3,
-	AirstrikeTroopDamage = 0.06,       -- share of the victim's troops
+-- launcher: building that fires it (one ready launcher of that kind is used; each has its own cooldown)
+GameConfig.Weapons = {
+	airstrike = { name = "Ataque aéreo", icon = "✈", gold = 1200, launcher = "airfield", cooldown = 30, speed = 45,
+		radius = 3, troopShare = 0.06, destroys = true,
+		purpose = "Destrói construções num raio pequeno e mata 6% das tropas do alvo." },
+	cluster = { name = "Bomba de fragmentação", icon = "💣", gold = 2500, launcher = "airfield", cooldown = 40, speed = 40,
+		radius = 6, troopKill = 1.5, destroys = false,
+		purpose = "Mata muitas tropas na área sem destruir construções nem o território." },
+	emp = { name = "Bomba EMP", icon = "⚡", gold = 4000, launcher = "silo", cooldown = 60, speed = 30,
+		radius = 12, disable = 45, destroys = false,
+		purpose = "Desliga todas as construções inimigas da área por 45 segundos." },
+	atomic = { name = "Bomba atômica", icon = "☢", gold = 8000, launcher = "silo", cooldown = 90, speed = 30,
+		radius = 10, fallout = 6, troopKill = 2, destroys = true,
+		purpose = "Destrói construções, mata tropas e deixa o centro sem dono." },
+	hydrogen = { name = "Bomba de hidrogênio", icon = "☣", gold = 20000, launcher = "silo", minLevel = 3, cooldown = 150, speed = 24,
+		radius = 18, fallout = 11, troopKill = 2.5, destroys = true,
+		purpose = "A maior explosão. Requer silo nível 3." },
 }
+GameConfig.WeaponOrder = { "airstrike", "cluster", "emp", "atomic", "hydrogen" }
 
 -- Diplomacy ----------------------------------------------------------------------
 GameConfig.Diplomacy = {
@@ -174,14 +283,14 @@ GameConfig.View = {
 	ZoomStep = 1.15,
 	KeyboardPanSpeed = 900,            -- screen pixels per second
 	DragThreshold = 6,
-	TwoClickConfirm = true,            -- first click aims, second click on the same spot confirms
+	TwoClickConfirm = false,           -- true: first click aims, second click confirms (weapons always confirm)
 	ConfirmRadius = 3,                 -- cells
 	ConfirmTimeout = 5,
 	LOD = { Regional = 1.6, Local = 4.0 }, -- zoom (multiples of the fit-to-screen zoom)
 }
 
 return GameConfig
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000006"><Properties><string name="Name">MapData</string><ProtectedString name="Source">-- GENERATED by tools/generate_map.py from Natural Earth (public domain). Do not edit by hand.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000007"><Properties><string name="Name">MapData</string><ProtectedString name="Source">-- GENERATED by tools/generate_map.py from Natural Earth (public domain). Do not edit by hand.
 -- rows: run-length encoded; each run = 2 base62 chars country index (0 = water) + 2 base62 chars length.
 return {
 	W = 640,
@@ -744,7 +853,7 @@ return {
 		{code = "ZWE", name = "Zimbábue", continent = "Africa", cells = 112, capital = 150776, population = 14645468},
 	},
 }
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000007"><Properties><string name="Name">MapGrid</string><ProtectedString name="Source">-- Mundial War · geographic grid shared by server and client.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000008"><Properties><string name="Name">MapGrid</string><ProtectedString name="Source">-- Mundial War · geographic grid shared by server and client.
 -- Cells are numbered i = y*W + x + 1 (x, y zero-based). This module only holds geography;
 -- ownership lives in the server's TerritoryService and the client's ClientState.
 local MapGrid = {}
@@ -906,7 +1015,7 @@ function MapGrid:countryByCode(code)
 end
 
 return MapGrid
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000008"><Properties><string name="Name">Palette</string><ProtectedString name="Source">-- Mundial War · readable, non-neon colours (RGB 0..255). Shared so the server can
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000009"><Properties><string name="Name">Palette</string><ProtectedString name="Source">-- Mundial War · readable, non-neon colours (RGB 0..255). Shared so the server can
 -- pick colours that differ from nearby nations and the client can paint them.
 local Palette = {}
 
@@ -951,7 +1060,7 @@ function Palette.mix(a, b, t)
 end
 
 return Palette
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000009"><Properties><string name="Name">Protocol</string><ProtectedString name="Source">-- Mundial War · names shared by client and server so remote traffic stays consistent.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000A"><Properties><string name="Name">Protocol</string><ProtectedString name="Source">-- Mundial War · names shared by client and server so remote traffic stays consistent.
 local Protocol = {}
 
 Protocol.CommandRemote = "MW_Command"   -- client -&gt; server: (action, a, b)
@@ -963,7 +1072,10 @@ Protocol.Actions = {
 	Target = "target",         -- (cell, percent) land expansion/attack, or naval when no land route
 	Cancel = "cancel",         -- (orderId or nil = all)
 	Build = "build",           -- (cell, kind)
-	Warship = "warship",       -- (portCell)
+	Warship = "warship",       -- (portCell) buy a defence boat
+	Patrol = "patrol",         -- (boatId, waterCell)
+	Upgrade = "upgrade",       -- (cell)
+	Weapon = "weapon",         -- (cell, weaponKind)
 	Nuke = "nuke",             -- (cell)
 	Airstrike = "airstrike",   -- (cell)
 	Ally = "ally",             -- (nationId) request or accept
@@ -1035,7 +1147,7 @@ function Protocol.formatK(n)
 end
 
 return Protocol
-</ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000A"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Script" referent="RBX0000000B"><Properties><string name="Name">MundialWar</string><ProtectedString name="Source">-- Mundial War · server bootstrap. Builds the world from the modules and drives it from Heartbeat.
+</ProtectedString></Properties></Item></Item></Item><Item class="ServerScriptService" referent="RBX0000000B"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Script" referent="RBX0000000C"><Properties><string name="Name">MundialWar</string><ProtectedString name="Source">-- Mundial War · server bootstrap. Builds the world from the modules and drives it from Heartbeat.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -1052,6 +1164,7 @@ local world = World.new({
 	Config = Config,
 	MapData = require(Shared.MapData),
 	MapGrid = require(Shared.MapGrid),
+	BuildingStats = require(Shared.BuildingStats),
 	Palette = require(Shared.Palette),
 	Protocol = require(Shared.Protocol),
 	random = math.random,
@@ -1100,7 +1213,7 @@ if Config.DEBUG_MODE then
 		end
 	end)
 end
-</ProtectedString><token name="RunContext">0</token></Properties><Item class="ModuleScript" referent="RBX0000000C"><Properties><string name="Name">BotService</string><ProtectedString name="Source">-- Mundial War · AI nations (real countries at their capitals) and small tribes.
+</ProtectedString><token name="RunContext">0</token></Properties><Item class="ModuleScript" referent="RBX0000000D"><Properties><string name="Name">BotService</string><ProtectedString name="Source">-- Mundial War · AI nations (real countries at their capitals) and small tribes.
 -- Each bot thinks on its own staggered schedule; nothing runs per frame for every bot.
 local BotService = {}
 
@@ -1271,6 +1384,26 @@ local function tryBuild(n, b, attacked)
 			end
 		end
 	end
+	-- rich bots improve what they have, and coastal ones keep a defence boat
+	if n.kind == "bot" then
+		if Buildings.count(n.id, "port") &gt; 0 and n.gold &gt; Config.Naval.BoatGold * 3 and #ctx.Naval.boats() &lt; 400 then
+			local mine = 0
+			for _, boat in ipairs(ctx.Naval.boats()) do if boat.nation == n.id then mine = mine + 1 end end
+			if mine &lt; 1 + math.floor(n.land / 1500) then
+				local port = Buildings.ofKind(n.id, "port")[1]
+				if ctx.Naval.buyBoat(n.id, port.cell) then return true end
+			end
+		end
+		for _, kind in ipairs({ "city", "factory", "bunker", "airdefense", "port" }) do
+			for _, building in ipairs(Buildings.ofKind(n.id, kind)) do
+				local cost = Buildings.upgradeCost(building)
+				if cost and n.gold &gt; cost * 2.5 then
+					Buildings.upgrade(n.id, building.cell)
+					return true
+				end
+			end
+		end
+	end
 	return false
 end
 
@@ -1392,25 +1525,27 @@ function BotService.debugView()
 end
 
 return BotService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000D"><Properties><string name="Name">BuildingService</string><ProtectedString name="Source">-- Mundial War · structures: placement rules, ownership on capture, area effects.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000E"><Properties><string name="Name">BuildingService</string><ProtectedString name="Source">-- Mundial War · structures: placement, levels, ownership on capture, area effects, EMP shutdown.
 local BuildingService = {}
 
-local ctx, Config, Map
-local buildings = {}       -- cell -&gt; { kind, owner, cell, readyAt }
+local ctx, Config, Map, Stats
+local buildings = {}       -- cell -&gt; { kind, owner, cell, level, readyAt, active, disabledUntil }
 local totals = {}          -- nid -&gt; { growth, capacity, gold, count = { kind = n } }
 local chunks = {}          -- chunk key -&gt; { cell = true }
+local disabled = {}        -- cell -&gt; true while an EMP keeps it off
 local CHUNK = 16
-local changes = {}         -- cell -&gt; kind or false (for replication)
-local EMPTY = { growth = 0, capacity = 0, gold = 0, count = {} }
+local changes = {}         -- cell -&gt; building or false (for replication)
+local EMPTY = { growth = 0, capacity = 0, gold = 0, attack = 0, count = {} }
 
 function BuildingService.init(context)
 	ctx = context
 	Config = ctx.Config
 	Map = ctx.Map
+	Stats = ctx.Stats
 end
 
 function BuildingService.reset()
-	buildings, totals, chunks, changes = {}, {}, {}, {}
+	buildings, totals, chunks, changes, disabled = {}, {}, {}, {}, {}
 end
 
 local function chunkKey(cell)
@@ -1418,18 +1553,34 @@ local function chunkKey(cell)
 	return math.floor(x / CHUNK) * 1000 + math.floor(y / CHUNK)
 end
 
-local function account(nid, kind, sign)
-	if nid &lt;= 0 then return end
+local function bucket(nid)
 	local t = totals[nid]
 	if not t then
-		t = { growth = 0, capacity = 0, gold = 0, count = {} }
+		t = { growth = 0, capacity = 0, gold = 0, attack = 0, count = {} }
 		totals[nid] = t
 	end
-	local def = Config.Buildings[kind]
-	t.growth = t.growth + sign * (def.growth or 0)
-	t.capacity = t.capacity + sign * (def.capacity or 0)
-	t.gold = t.gold + sign * (def.gold or 0)
-	t.count[kind] = (t.count[kind] or 0) + sign
+	return t
+end
+
+-- Economic effect of one building (only while it is active).
+local function economy(b, sign)
+	if b.owner &lt;= 0 or not b.active then return end
+	local t = bucket(b.owner)
+	local level = b.level
+	t.growth = t.growth + sign * (Stats.stat(Config, b.kind, level, "growth") or 0)
+	t.capacity = t.capacity + sign * (Stats.stat(Config, b.kind, level, "capacity") or 0)
+	t.gold = t.gold + sign * (Stats.stat(Config, b.kind, level, "gold") or 0)
+	t.attack = t.attack + sign * (Stats.stat(Config, b.kind, level, "attackBonus") or 0)
+end
+
+local function count(b, sign)
+	if b.owner &lt;= 0 then return end
+	local t = bucket(b.owner)
+	t.count[b.kind] = (t.count[b.kind] or 0) + sign
+end
+
+local function changed(b)
+	changes[b.cell] = b
 end
 
 function BuildingService.totals(nid)
@@ -1447,6 +1598,10 @@ end
 
 function BuildingService.all()
 	return buildings
+end
+
+function BuildingService.stat(b, field)
+	return Stats.stat(Config, b.kind, b.level, field)
 end
 
 function BuildingService.cost(nid, kind)
@@ -1474,17 +1629,24 @@ function BuildingService.near(cell, radius, fn)
 	end
 end
 
--- True when `owner` has a `kind` building whose own radius covers `cell`.
-function BuildingService.covered(cell, kind, ownerNid)
-	if BuildingService.count(ownerNid, kind) &lt;= 0 then return false end
-	local found = false
-	BuildingService.near(cell, Config.Buildings[kind].radius, function(b)
-		if b.kind == kind and b.owner == ownerNid then
-			found = true
-			return true
+-- Strongest value of `field` among active `kind` buildings of `ownerNid` whose own reach
+-- (radius at their level) covers `cell`; nil when none does. `lowest` picks the smallest
+-- value instead (for multipliers where lower is stronger).
+function BuildingService.covered(cell, kind, ownerNid, field, lowest)
+	if BuildingService.count(ownerNid, kind) &lt;= 0 then return nil end
+	local best = nil
+	local cx, cy = Map:xy(cell)
+	BuildingService.near(cell, Stats.maxStat(Config, kind, "radius"), function(b)
+		if b.kind == kind and b.owner == ownerNid and b.active then
+			local r = BuildingService.stat(b, "radius")
+			local bx, by = Map:xy(b.cell)
+			if (bx - cx) * (bx - cx) + (by - cy) * (by - cy) &lt;= r * r then
+				local v = field and BuildingService.stat(b, field) or 1
+				if best == nil or (lowest and v &lt; best) or (not lowest and v &gt; best) then best = v end
+			end
 		end
 	end)
-	return found
+	return best
 end
 
 function BuildingService.canBuild(nid, cell, kind)
@@ -1512,13 +1674,16 @@ function BuildingService.canBuild(nid, cell, kind)
 	return true, cost
 end
 
-local function place(cell, kind, nid)
-	buildings[cell] = { kind = kind, owner = nid, cell = cell, readyAt = 0 }
+local function place(cell, kind, nid, level)
+	local b = { kind = kind, owner = nid, cell = cell, level = level or 1, readyAt = 0, active = true }
+	buildings[cell] = b
 	local key = chunkKey(cell)
 	chunks[key] = chunks[key] or {}
 	chunks[key][cell] = true
-	account(nid, kind, 1)
-	changes[cell] = { kind, nid }
+	count(b, 1)
+	economy(b, 1)
+	changed(b)
+	return b
 end
 
 function BuildingService.build(nid, cell, kind)
@@ -1526,23 +1691,75 @@ function BuildingService.build(nid, cell, kind)
 	if not ok then return false, costOrWhy end
 	local n = ctx.Nations.get(nid)
 	n.gold = n.gold - costOrWhy
-	place(cell, kind, nid)
-	return true, Config.Buildings[kind].name .. " construída."
+	place(cell, kind, nid, 1)
+	return true, "Construção pronta: " .. Config.Buildings[kind].name .. "."
+end
+
+function BuildingService.upgradeCost(b)
+	return Stats.upgradeCost(Config, b.kind, b.level)
+end
+
+function BuildingService.upgrade(nid, cell)
+	local n = ctx.Nations.get(nid)
+	local b = buildings[cell]
+	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
+	if not n or not n.alive then return false, "Você não tem nação." end
+	if not b or b.owner ~= nid then return false, "Selecione uma construção sua." end
+	local cost = BuildingService.upgradeCost(b)
+	if not cost then return false, "Já está no nível máximo." end
+	if n.gold &lt; cost then return false, "Ouro insuficiente (" .. cost .. ")." end
+	n.gold = n.gold - cost
+	economy(b, -1)
+	b.level = b.level + 1
+	economy(b, 1)
+	changed(b)
+	return true, Config.Buildings[b.kind].name .. " agora é nível " .. b.level .. "."
 end
 
 function BuildingService.destroy(cell)
 	local b = buildings[cell]
 	if not b then return end
+	economy(b, -1)
+	count(b, -1)
 	buildings[cell] = nil
+	disabled[cell] = nil
 	local set = chunks[chunkKey(cell)]
 	if set then set[cell] = nil end
-	account(b.owner, b.kind, -1)
 	changes[cell] = false
 	if b.kind == "port" then ctx.Naval.onPortLost(cell) end
 end
 
--- Territory calls this for every ownership change: captured structures change hands,
--- structures on land that becomes neutral are destroyed.
+-- EMP: the building stops working until `untilTime`.
+function BuildingService.disable(cell, untilTime)
+	local b = buildings[cell]
+	if not b then return end
+	if b.active then
+		economy(b, -1)
+		b.active = false
+	end
+	b.disabledUntil = math.max(b.disabledUntil or 0, untilTime)
+	disabled[cell] = true
+	changed(b)
+end
+
+function BuildingService.tick()
+	local now = ctx.now()
+	for cell in pairs(disabled) do
+		local b = buildings[cell]
+		if not b then
+			disabled[cell] = nil
+		elseif now &gt;= (b.disabledUntil or 0) then
+			b.active = true
+			b.disabledUntil = nil
+			economy(b, 1)
+			disabled[cell] = nil
+			changed(b)
+		end
+	end
+end
+
+-- Territory calls this for every ownership change: captured structures change hands
+-- (keeping their level), structures on land that becomes neutral are destroyed.
 function BuildingService.onOwnerChanged(cell, old, new)
 	local b = buildings[cell]
 	if not b then return end
@@ -1550,18 +1767,26 @@ function BuildingService.onOwnerChanged(cell, old, new)
 		BuildingService.destroy(cell)
 		return
 	end
-	account(b.owner, b.kind, -1)
+	economy(b, -1)
+	count(b, -1)
 	b.owner = new
-	account(new, b.kind, 1)
-	changes[cell] = { b.kind, new }
+	count(b, 1)
+	economy(b, 1)
+	changed(b)
 	if b.kind == "port" then ctx.Naval.onPortLost(cell) end
 end
 
+local function row(cell, b)
+	if not b then return { cell, false, 0, 0, false } end
+	return { cell, b.kind, b.owner, b.level, not b.active }
+end
+
+-- Replication rows: { cell, kind | false, owner, level, disabled }
 function BuildingService.drainChanges()
 	if next(changes) == nil then return nil end
 	local out = {}
-	for cell, v in pairs(changes) do
-		out[#out + 1] = { cell, v and v[1] or false, v and v[2] or 0 }
+	for cell, b in pairs(changes) do
+		out[#out + 1] = row(cell, b ~= false and buildings[cell] or nil)
 	end
 	changes = {}
 	return out
@@ -1569,23 +1794,21 @@ end
 
 function BuildingService.snapshot()
 	local out = {}
-	for cell, b in pairs(buildings) do
-		out[#out + 1] = { cell, b.kind, b.owner }
-	end
+	for cell, b in pairs(buildings) do out[#out + 1] = row(cell, b) end
 	return out
 end
 
 function BuildingService.ofKind(nid, kind)
 	local list = {}
 	if BuildingService.count(nid, kind) &lt;= 0 then return list end
-	for cell, b in pairs(buildings) do
+	for _, b in pairs(buildings) do
 		if b.owner == nid and b.kind == kind then list[#list + 1] = b end
 	end
 	return list
 end
 
 return BuildingService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000E"><Properties><string name="Name">CombatService</string><ProtectedString name="Source">-- Mundial War · cost of taking a cell and defensive area effects on fronts.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000F"><Properties><string name="Name">CombatService</string><ProtectedString name="Source">-- Mundial War · cost of taking a cell and defensive area effects on fronts.
 local CombatService = {}
 
 local ctx, Config, Map
@@ -1616,15 +1839,18 @@ function CombatService.cellCost(attackerId, cell, orderTroops, front)
 		cost = math.max(C.EnemyMinCost, density * C.DefenseDensityFactor)
 		defenderLoss = density * C.DefenderLossFactor
 		local Buildings = ctx.Buildings
-		if Buildings.covered(cell, "bunker", target) then cost = cost * B.bunker.defense end
-		if Buildings.covered(cell, "machinegun", target) then
-			cost = cost * (1 + math.min(1, (orderTroops or 0) / B.machinegun.massDefense))
+		local bunker = Buildings.covered(cell, "bunker", target, "defense")
+		if bunker then cost = cost * bunker end
+		local mg = Buildings.covered(cell, "machinegun", target, "maxFactor")
+		if mg then
+			cost = cost * (1 + math.min(mg - 1, (orderTroops or 0) / B.machinegun.massDefense))
 		end
 		if Map:distance(cell, defender.capital) &lt;= C.CapitalRadius then cost = cost * C.CapitalDefense end
-		if Buildings.covered(cell, "artillery", attackerId) then cost = cost * B.artillery.support end
-		local tanks = Buildings.count(attackerId, "tankfactory")
-		if tanks &gt; 0 then
-			cost = cost * math.max(B.tankfactory.attackFloor, 1 - B.tankfactory.attackBonus * tanks)
+		local support = Buildings.covered(cell, "artillery", attackerId, "support", true)
+		if support then cost = cost * support end
+		local attack = Buildings.totals(attackerId).attack
+		if attack &gt; 0 then
+			cost = cost * math.max(B.tankfactory.attackFloor, 1 - attack)
 		end
 	end
 	if front and not ctx.Territory.isMainland(attackerId, front) then
@@ -1643,16 +1869,18 @@ function CombatService.tick(dt)
 	local B = Config.Buildings
 	for _, order in ipairs(ctx.Expansion.activeOrders()) do
 		if order.target &gt; 0 and order.front then
-			if doTower and ctx.Buildings.covered(order.front, "tower", order.target) then
-				order.troops = order.troops * (1 - B.tower.attrition * pulseClock)
+			local attrition = doTower and ctx.Buildings.covered(order.front, "tower", order.target, "attrition")
+			if attrition then
+				order.troops = order.troops * (1 - attrition * pulseClock)
 			end
 			if doArtillery then
 				-- the defender's artillery, or an ally of the defender, shells the front
 				local shooters = ctx.Diplomacy.allies(order.target)
 				shooters[#shooters + 1] = order.target
 				for _, nid in ipairs(shooters) do
-					if nid ~= order.nation and ctx.Buildings.covered(order.front, "artillery", nid) then
-						order.troops = order.troops * (1 - B.artillery.damage)
+					local damage = nid ~= order.nation and ctx.Buildings.covered(order.front, "artillery", nid, "damage")
+					if damage then
+						order.troops = order.troops * (1 - damage)
 						break
 					end
 				end
@@ -1664,7 +1892,7 @@ function CombatService.tick(dt)
 end
 
 return CombatService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000F"><Properties><string name="Name">CommandService</string><ProtectedString name="Source">-- Mundial War · validates and routes every client intention. Pure Lua (no Roblox APIs) so the
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000010"><Properties><string name="Name">CommandService</string><ProtectedString name="Source">-- Mundial War · validates and routes every client intention. Pure Lua (no Roblox APIs) so the
 -- anti-cheat rules are unit tested. The client never decides anything: it only asks.
 local CommandService = {}
 
@@ -1747,13 +1975,18 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 		return ctx.Buildings.build(nid, a, b)
 	elseif action == A.Warship then
 		if not isInt(a) or not Map:valid(a) then return false, "Célula inválida." end
-		return ctx.Naval.buyWarship(nid, a)
-	elseif action == A.Nuke then
+		return ctx.Naval.buyBoat(nid, a)
+	elseif action == A.Patrol then
+		if not isInt(a) or not isInt(b) or not Map:valid(b) then return false, "Ponto inválido." end
+		return ctx.Naval.patrol(nid, a, b)
+	elseif action == A.Upgrade then
+		if not isInt(a) or not Map:valid(a) then return false, "Célula inválida." end
+		return ctx.Buildings.upgrade(nid, a)
+	elseif action == A.Weapon or action == A.Nuke or action == A.Airstrike then
 		if not isInt(a) or not Map:valid(a) then return false, "Alvo inválido." end
-		return ctx.Strategic.launchNuke(nid, a)
-	elseif action == A.Airstrike then
-		if not isInt(a) or not Map:valid(a) then return false, "Alvo inválido." end
-		return ctx.Strategic.launchAirstrike(nid, a)
+		local kind = action == A.Nuke and "atomic" or action == A.Airstrike and "airstrike" or b
+		if type(kind) ~= "string" or not Config.Weapons[kind] then return false, "Arma inválida." end
+		return ctx.Strategic.launch(nid, a, kind)
 	elseif action == A.Ally or action == A.Decline or action == A.BreakAlliance or action == A.War then
 		if not isInt(a) or not ctx.Nations.get(a) or a == nid then return false, "Nação inválida." end
 		if action == A.Ally then return ctx.Diplomacy.requestAlliance(nid, a) end
@@ -1765,7 +1998,7 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 end
 
 return CommandService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000010"><Properties><string name="Name">DiplomacyService</string><ProtectedString name="Source">-- Mundial War · alliances and wars.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000011"><Properties><string name="Name">DiplomacyService</string><ProtectedString name="Source">-- Mundial War · alliances and wars.
 -- Default relation is neutral: you may attack a neutral nation (that declares war).
 -- Allies cannot attack each other until the alliance is cancelled.
 local DiplomacyService = {}
@@ -1940,7 +2173,7 @@ function DiplomacyService.tick()
 end
 
 return DiplomacyService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000011"><Properties><string name="Name">EconomyService</string><ProtectedString name="Source">-- Mundial War · troop generation, capacity and gold.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000012"><Properties><string name="Name">EconomyService</string><ProtectedString name="Source">-- Mundial War · troop generation, capacity and gold.
 local EconomyService = {}
 
 local ctx
@@ -1994,7 +2227,7 @@ function EconomyService.spendGold(n, amount)
 end
 
 return EconomyService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000012"><Properties><string name="Name">ExpansionService</string><ProtectedString name="Source">-- Mundial War · expansion orders: the "click → front advances → territory grows" loop.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000013"><Properties><string name="Name">ExpansionService</string><ProtectedString name="Source">-- Mundial War · expansion orders: the "click → front advances → territory grows" loop.
 --
 -- An order holds troops taken from the reserve once. Every simulation tick it captures a
 -- few cells of its target owner (0 = neutral) that touch the nation, chosen to form an
@@ -2283,7 +2516,7 @@ function ExpansionService.publicView()
 end
 
 return ExpansionService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000013"><Properties><string name="Name">MatchService</string><ProtectedString name="Source">-- Mundial War · round life cycle: waiting → spawn phase → playing → victory → next round.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000014"><Properties><string name="Name">MatchService</string><ProtectedString name="Source">-- Mundial War · round life cycle: waiting → spawn phase → playing → victory → next round.
 local MatchService = {}
 
 local ctx, Config
@@ -2400,7 +2633,7 @@ function MatchService.publicView()
 end
 
 return MatchService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000014"><Properties><string name="Name">NationService</string><ProtectedString name="Source">-- Mundial War · players, AI nations and tribes: identity, colour, capital, life cycle.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000015"><Properties><string name="Name">NationService</string><ProtectedString name="Source">-- Mundial War · players, AI nations and tribes: identity, colour, capital, life cycle.
 local NationService = {}
 
 local ctx
@@ -2555,12 +2788,13 @@ function NationService.countAlive(kind)
 end
 
 return NationService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000015"><Properties><string name="Name">NavalService</string><ProtectedString name="Source">-- Mundial War · ports, troop transports across water, warships, amphibious landings.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000016"><Properties><string name="Name">NavalService</string><ProtectedString name="Source">-- Mundial War · ports, troop transports across water, defence boats, amphibious landings.
 local NavalService = {}
 
 local ctx, Config, Map, Territory
 local fleets = {}        -- list of { id, nation, troops, path, progress, target }
-local warships = {}      -- list of { id, nation, port, cell }
+local boats = {}         -- list of { id, nation, port, level, x, y, hp, center, path, step, waypoint }
+local waterBody = nil    -- cell -&gt; connected water body id
 local nextId = 1
 local visit, prev, vstamp = {}, {}, 0
 local nb = {}
@@ -2570,18 +2804,40 @@ function NavalService.init(context)
 	Config = ctx.Config
 	Map = ctx.Map
 	Territory = ctx.Territory
+	-- connected water bodies, so a boat is only sent where it can actually sail
+	waterBody = {}
+	local id, scratch = 0, {}
+	for start = 1, Map.N do
+		if not Map.land[start] and not waterBody[start] then
+			id = id + 1
+			local queue, head = { start }, 1
+			waterBody[start] = id
+			while head &lt;= #queue do
+				local i = queue[head]
+				head = head + 1
+				local n = Map:neighbors(i, scratch)
+				for k = 1, n do
+					local j = scratch[k]
+					if not Map.land[j] and not waterBody[j] then
+						waterBody[j] = id
+						queue[#queue + 1] = j
+					end
+				end
+			end
+		end
+	end
 end
 
 function NavalService.reset()
-	fleets, warships, nextId = {}, {}, 1
+	fleets, boats, nextId = {}, {}, 1
 end
 
 function NavalService.fleets()
 	return fleets
 end
 
-function NavalService.warships()
-	return warships
+function NavalService.boats()
+	return boats
 end
 
 local function waterNeighbor(cell)
@@ -2673,40 +2929,87 @@ function NavalService.launch(nid, cell, percent)
 	return true, "Frota a caminho com " .. troops .. " tropas."
 end
 
-function NavalService.buyWarship(nid, portCell)
+local function boatCell(b)
+	return Map:index(math.floor(b.x), math.floor(b.y))
+end
+
+-- Water path between two water cells (BFS, nil when not connected).
+local function waterPath(from, to)
+	if waterBody[from] ~= waterBody[to] then return nil end
+	vstamp = vstamp + 1
+	local queue, head = { from }, 1
+	visit[from] = vstamp
+	prev[from] = 0
+	local scratch = {}
+	while head &lt;= #queue do
+		local i = queue[head]
+		head = head + 1
+		if i == to then
+			local rev = {}
+			while i ~= 0 do rev[#rev + 1] = i i = prev[i] end
+			local path = {}
+			for k = #rev, 1, -1 do path[#path + 1] = rev[k] end
+			return path
+		end
+		local m = Map:neighbors(i, scratch)
+		for k = 1, m do
+			local j = scratch[k]
+			if not Map.land[j] and visit[j] ~= vstamp then
+				visit[j] = vstamp
+				prev[j] = i
+				queue[#queue + 1] = j
+			end
+		end
+	end
+	return nil
+end
+
+function NavalService.boatsAt(portCell)
+	local c = 0
+	for _, b in ipairs(boats) do if b.port == portCell then c = c + 1 end end
+	return c
+end
+
+-- Defence boat: bought at one of your ports; patrols around that port until you send it elsewhere.
+function NavalService.buyBoat(nid, portCell)
 	local N = Config.Naval
 	local n = ctx.Nations.get(nid)
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
 	if not n or not n.alive then return false, "Você não tem nação." end
-	local b = ctx.Buildings.at(portCell)
-	if not b or b.kind ~= "port" or b.owner ~= nid then return false, "Selecione um porto seu." end
-	local here = 0
-	for _, w in ipairs(warships) do
-		if w.port == portCell then here = here + 1 end
-	end
-	if here &gt;= N.WarshipsPerPort then return false, "Este porto já tem " .. N.WarshipsPerPort .. " navios." end
-	if n.gold &lt; N.WarshipGold then return false, "Navio de guerra custa " .. N.WarshipGold .. " de ouro." end
+	local port = ctx.Buildings.at(portCell)
+	if not port or port.kind ~= "port" or port.owner ~= nid then return false, "Selecione um porto seu." end
+	local limit = ctx.Buildings.stat(port, "boats")
+	if NavalService.boatsAt(portCell) &gt;= limit then return false, "Este porto já tem " .. limit .. " barcos. Melhore o porto para ter mais." end
+	if n.gold &lt; N.BoatGold then return false, "Barco de defesa custa " .. N.BoatGold .. " de ouro." end
 	local water = waterNeighbor(portCell)
 	if not water then return false, "Porto sem acesso à água." end
-	n.gold = n.gold - N.WarshipGold
-	warships[#warships + 1] = { id = nextId, nation = nid, port = portCell, cell = water }
+	n.gold = n.gold - N.BoatGold
+	local x, y = Map:xy(water)
+	boats[#boats + 1] = {
+		id = nextId, nation = nid, port = portCell, level = port.level, x = x + 0.5, y = y + 0.5,
+		hp = N.BoatHealth, center = water, path = nil, step = 1, waypoint = nil,
+	}
 	nextId = nextId + 1
-	return true, "Navio de guerra em patrulha."
+	return true, "Barco de defesa lançado. Clique nele e depois na água para escolher onde patrulhar."
+end
+
+function NavalService.patrol(nid, boatId, cell)
+	if not Map:valid(cell) or Map.land[cell] then return false, "Escolha um ponto na água." end
+	for _, b in ipairs(boats) do
+		if b.id == boatId then
+			if b.nation ~= nid then return false, "Esse barco não é seu." end
+			local here = boatCell(b)
+			local path = here and waterPath(here, cell)
+			if not path then return false, "O barco não alcança esse ponto por água." end
+			b.center, b.path, b.step, b.waypoint = cell, path, 1, nil
+			return true, "Barco a caminho da nova patrulha."
+		end
+	end
+	return false, "Barco não encontrado."
 end
 
 function NavalService.onPortLost(portCell)
-	local k = 1
-	for i = 1, #warships do
-		local w = warships[i]
-		local b = ctx.Buildings.at(portCell)
-		if w.port == portCell and (not b or b.owner ~= w.nation) then
-			-- sunk with its port
-		else
-			warships[k] = w
-			k = k + 1
-		end
-	end
-	for i = k, #warships do warships[i] = nil end
+	-- boats already at sea keep fighting for their nation; the port just stops building more
 end
 
 function NavalService.removeNation(nid)
@@ -2716,10 +3019,96 @@ function NavalService.removeNation(nid)
 	end
 	for i = k, #fleets do fleets[i] = nil end
 	k = 1
-	for i = 1, #warships do
-		if warships[i].nation ~= nid then warships[k] = warships[i] k = k + 1 end
+	for i = 1, #boats do
+		if boats[i].nation ~= nid then boats[k] = boats[i] k = k + 1 end
 	end
-	for i = k, #warships do warships[i] = nil end
+	for i = k, #boats do boats[i] = nil end
+end
+
+local function boatRange(b) return Config.Naval.BoatRange + (b.level - 1) end
+local function boatDamage(b) return Config.Naval.BoatDamage + 4 * (b.level - 1) end
+
+local function moveBoat(b, dt)
+	local N = Config.Naval
+	local tx, ty
+	if b.path and b.step &lt;= #b.path then
+		local x, y = Map:xy(b.path[b.step])
+		tx, ty = x + 0.5, y + 0.5
+	else
+		b.path = nil
+		if not b.waypoint then
+			-- pick a nearby water cell on the patrol circle
+			local cx, cy = Map:xy(b.center)
+			for _ = 1, 8 do
+				local a = ctx.random() * math.pi * 2
+				local r = N.BoatOrbit * (0.5 + ctx.random() * 0.5)
+				local c = Map:index(math.floor(cx + 0.5 + math.cos(a) * r), math.floor(cy + 0.5 + math.sin(a) * r))
+				if c and not Map.land[c] and waterBody[c] == waterBody[b.center] then b.waypoint = c break end
+			end
+			b.waypoint = b.waypoint or b.center
+		end
+		local x, y = Map:xy(b.waypoint)
+		tx, ty = x + 0.5, y + 0.5
+	end
+	local dx, dy = tx - b.x, ty - b.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	local stepLen = N.BoatSpeed * dt
+	if d &lt;= stepLen then
+		b.x, b.y = tx, ty
+		if b.path then b.step = b.step + 1 else b.waypoint = nil end
+	else
+		b.x, b.y = b.x + dx / d * stepLen, b.y + dy / d * stepLen
+	end
+end
+
+-- Boats fight enemy boats, wear down enemy transports and raid gold from enemy ports in reach.
+local function boatCombat(dt)
+	local N = Config.Naval
+	for _, b in ipairs(boats) do
+		local range = boatRange(b)
+		local r2 = range * range
+		local target, best = nil, math.huge
+		for _, o in ipairs(boats) do
+			if o.nation ~= b.nation and o.hp &gt; 0 and ctx.Diplomacy.relation(b.nation, o.nation) == "war" then
+				local d = (o.x - b.x) ^ 2 + (o.y - b.y) ^ 2
+				if d &lt;= r2 and d &lt; best then target, best = o, d end
+			end
+		end
+		if target then target.hp = target.hp - boatDamage(b) * dt end
+		for _, f in ipairs(fleets) do
+			if f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
+				local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
+				if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r2 then
+					f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
+				end
+			end
+		end
+		local here = boatCell(b)
+		if here then
+			local owner = ctx.Nations.get(b.nation)
+			ctx.Buildings.near(here, range, function(p)
+				if p.kind == "port" and p.owner ~= b.nation and ctx.Diplomacy.relation(b.nation, p.owner) == "war" then
+					local victim = ctx.Nations.get(p.owner)
+					if victim and owner then
+						local take = math.min(victim.gold, N.BoatGoldSteal * dt)
+						victim.gold = victim.gold - take
+						owner.gold = owner.gold + take
+					end
+				end
+			end)
+		end
+	end
+	local k = 1
+	for i = 1, #boats do
+		local b = boats[i]
+		if b.hp &gt; 0 then
+			boats[k] = b
+			k = k + 1
+		else
+			ctx.notify(b.nation, "Um barco de defesa seu foi afundado.", "bad")
+		end
+	end
+	for i = k, #boats do boats[i] = nil end
 end
 
 local function land(f)
@@ -2764,23 +3153,12 @@ function NavalService.tick(dt)
 	if not ctx.Match.isPlaying() then return end
 	local N = Config.Naval
 	local k = 1
-	local r2 = N.WarshipRadius * N.WarshipRadius
 	for i = 1, #fleets do
 		local f = fleets[i]
 		local n = ctx.Nations.get(f.nation)
 		local keep = n ~= nil and n.alive
 		if keep then
 			f.progress = f.progress + N.Speed * dt
-			local pos = f.path[math.min(#f.path, math.floor(f.progress))]
-			local px, py = Map:xy(pos)
-			for _, w in ipairs(warships) do
-				if w.nation ~= f.nation and ctx.Diplomacy.relation(w.nation, f.nation) == "war" then
-					local wx, wy = Map:xy(w.cell)
-					if (wx - px) * (wx - px) + (wy - py) * (wy - py) &lt;= r2 then
-						f.troops = f.troops * (1 - N.WarshipDamagePerSecond * dt)
-					end
-				end
-			end
 			if f.troops &lt; 1 then
 				ctx.notify(f.nation, "Sua frota foi afundada.", "bad")
 				keep = false
@@ -2797,6 +3175,19 @@ function NavalService.tick(dt)
 		end
 	end
 	for i = k, #fleets do fleets[i] = nil end
+	for _, b in ipairs(boats) do
+		if ctx.Nations.alive(b.nation) then moveBoat(b, dt) end
+	end
+	boatCombat(dt)
+end
+
+-- Boat rows for clients: { id, nation, x, y, health, patrolCell, level }
+function NavalService.boatView()
+	local out = {}
+	for _, b in ipairs(boats) do
+		out[#out + 1] = { b.id, b.nation, math.floor(b.x * 10) / 10, math.floor(b.y * 10) / 10, math.floor(b.hp), b.center, b.level }
+	end
+	return out
 end
 
 function NavalService.publicView()
@@ -2812,14 +3203,11 @@ function NavalService.snapshot()
 	for _, f in ipairs(fleets) do
 		fl[#fl + 1] = { f.id, f.nation, math.floor(f.troops), f.path, Config.Naval.Speed, f.target, f.progress }
 	end
-	for _, w in ipairs(warships) do
-		ws[#ws + 1] = { w.id, w.nation, w.cell }
-	end
-	return fl, ws
+	return fl, NavalService.boatView()
 end
 
 return NavalService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000016"><Properties><string name="Name">NetworkService</string><ProtectedString name="Source">-- Mundial War · Roblox side of replication: remotes, join sync, batched broadcasts.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000017"><Properties><string name="Name">NetworkService</string><ProtectedString name="Source">-- Mundial War · Roblox side of replication: remotes, join sync, batched broadcasts.
 -- All decisions are made by World/CommandService; this module only moves data.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -2941,7 +3329,8 @@ function NetworkService.flush(dt)
 end
 
 return NetworkService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000017"><Properties><string name="Name">StrategicService</string><ProtectedString name="Source">-- Mundial War · nuclear missiles (silo) and air strikes (air base), intercepted by air defence.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000018"><Properties><string name="Name">StrategicService</string><ProtectedString name="Source">-- Mundial War · strategic weapons (air strike, cluster, EMP, atomic, hydrogen), fired from
+-- air bases or silos and possibly intercepted by air defence.
 local StrategicService = {}
 
 local ctx, Config, Map, Territory
@@ -2963,72 +3352,66 @@ function StrategicService.missiles()
 	return missiles
 end
 
-local function pickLauncher(nid, kind, target, range)
+-- Nearest ready launcher of the right kind (and level) that reaches the target.
+local function pickLauncher(nid, weapon, target)
 	local best, bestD = nil, math.huge
 	local now = ctx.now()
-	local anyReady = false
-	for _, b in ipairs(ctx.Buildings.ofKind(nid, kind)) do
-		if b.readyAt &lt;= now then
-			anyReady = true
+	local why = "Aguarde a recarga do lançador."
+	for _, b in ipairs(ctx.Buildings.ofKind(nid, weapon.launcher)) do
+		if not b.active then
+			why = "Seu lançador está desligado por um EMP."
+		elseif weapon.minLevel and b.level &lt; weapon.minLevel then
+			why = "Requer " .. Config.Buildings[weapon.launcher].name .. " nível " .. weapon.minLevel .. "."
+		elseif b.readyAt &lt;= now then
 			local d = Map:distance(b.cell, target)
-			if (not range or d &lt;= range) and d &lt; bestD then best, bestD = b, d end
+			local range = ctx.Buildings.stat(b, "range")
+			if range and d &gt; range then
+				why = "Alvo fora do alcance da base aérea (" .. math.floor(range) .. " células)."
+			elseif d &lt; bestD then
+				best, bestD = b, d
+			end
 		end
 	end
-	return best, bestD, anyReady
+	return best, bestD, why
 end
 
-local function validTarget(nid, cell)
+function StrategicService.launch(nid, cell, kind)
+	local weapon = Config.Weapons[kind]
+	local n = ctx.Nations.get(nid)
+	if not weapon then return false, "Arma inválida." end
+	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
+	if not n or not n.alive then return false, "Você não tem nação." end
 	if not Map:valid(cell) then return false, "Alvo inválido." end
 	local owner = Territory.ownerOf(cell)
 	if owner == nid then return false, "Esse alvo é seu." end
 	if owner &gt; 0 and ctx.Diplomacy.allied(nid, owner) then return false, "Não é possível atacar um aliado." end
-	return true, owner
-end
-
-local function launch(nid, kind, cell)
-	local S = Config.Strategic
-	local n = ctx.Nations.get(nid)
-	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
-	if not n or not n.alive then return false, "Você não tem nação." end
-	local ok, ownerOrWhy = validTarget(nid, cell)
-	if not ok then return false, ownerOrWhy end
-	local owner = ownerOrWhy
-	local isNuke = kind == "nuke"
-	local launcherKind = isNuke and "silo" or "airfield"
-	local gold = isNuke and S.NukeGold or S.AirstrikeGold
-	if ctx.Buildings.count(nid, launcherKind) &lt;= 0 then
-		return false, "Requer " .. Config.Buildings[launcherKind].name .. "."
+	if kind == "airstrike" and owner &lt;= 0 then return false, "Ataque aéreo precisa de um alvo inimigo." end
+	if ctx.Buildings.count(nid, weapon.launcher) &lt;= 0 then
+		return false, "Requer " .. Config.Buildings[weapon.launcher].name .. "."
 	end
-	if not isNuke and owner &lt;= 0 then return false, "Bombardeio aéreo precisa de um alvo inimigo." end
-	local launcher, distance, anyReady = pickLauncher(nid, launcherKind, cell, (not isNuke) and Config.Buildings.airfield.range or nil)
-	if not launcher then
-		if anyReady then return false, "Alvo fora do alcance da base aérea." end
-		return false, "Aguarde a recarga do lançador."
-	end
-	if n.gold &lt; gold then return false, "Custa " .. gold .. " de ouro." end
-	n.gold = n.gold - gold
-	launcher.readyAt = ctx.now() + (isNuke and S.NukeCooldown or S.AirstrikeCooldown)
+	local launcher, distance, why = pickLauncher(nid, weapon, cell)
+	if not launcher then return false, why end
+	if n.gold &lt; weapon.gold then return false, weapon.name .. " custa " .. weapon.gold .. " de ouro." end
+	n.gold = n.gold - weapon.gold
+	local factor = ctx.Buildings.stat(launcher, "cooldownFactor") or 1
+	launcher.readyAt = ctx.now() + weapon.cooldown * factor
 	if owner &gt; 0 then ctx.Diplomacy.ensureWar(nid, owner) end
 	local m = {
 		id = nextId, kind = kind, nation = nid, from = launcher.cell, to = cell,
-		progress = 0, distance = math.max(1, distance), speed = isNuke and S.NukeSpeed or S.AirstrikeSpeed,
+		progress = 0, distance = math.max(1, distance), speed = weapon.speed,
 	}
 	nextId = nextId + 1
 	missiles[#missiles + 1] = m
 	ctx.emit(nil, { k = ctx.Protocol.Events.Impact, launch = { m.id, kind, nid, m.from, m.to, m.speed } })
 	if owner &gt; 0 then
-		ctx.notify(owner, (isNuke and "☢ Míssil nuclear" or "✈ Ataque aéreo") .. " de " .. n.name .. " a caminho!", "war")
+		ctx.notify(owner, weapon.icon .. " " .. weapon.name .. " de " .. n.name .. " a caminho!", "war")
 	end
-	return true, isNuke and "Míssil nuclear lançado." or "Ataque aéreo a caminho."
+	return true, weapon.name .. " lançada."
 end
 
-function StrategicService.launchNuke(nid, cell)
-	return launch(nid, "nuke", cell)
-end
-
-function StrategicService.launchAirstrike(nid, cell)
-	return launch(nid, "airstrike", cell)
-end
+-- Kept for older callers: the atomic bomb and the air strike.
+function StrategicService.launchNuke(nid, cell) return StrategicService.launch(nid, cell, "atomic") end
+function StrategicService.launchAirstrike(nid, cell) return StrategicService.launch(nid, cell, "airstrike") end
 
 local function intercepted(m)
 	local owner = Territory.ownerOf(m.to)
@@ -3037,11 +3420,13 @@ local function intercepted(m)
 	defenders[#defenders + 1] = owner
 	local isDefender = {}
 	for _, d in ipairs(defenders) do isDefender[d] = true end
-	local def = Config.Buildings.airdefense
 	local hit = false
-	ctx.Buildings.near(m.to, def.radius, function(b)
-		if b.kind == "airdefense" and isDefender[b.owner] and b.owner ~= m.nation then
-			if ctx.random() &lt; def.intercept then
+	local tx, ty = Map:xy(m.to)
+	ctx.Buildings.near(m.to, ctx.Stats.maxStat(Config, "airdefense", "radius"), function(b)
+		if b.kind == "airdefense" and b.active and isDefender[b.owner] and b.owner ~= m.nation then
+			local r = ctx.Buildings.stat(b, "radius")
+			local bx, by = Map:xy(b.cell)
+			if (bx - tx) ^ 2 + (by - ty) ^ 2 &lt;= r * r and ctx.random() &lt; ctx.Buildings.stat(b, "intercept") then
 				hit = true
 				return true
 			end
@@ -3051,44 +3436,52 @@ local function intercepted(m)
 end
 
 local function impact(m)
-	local S = Config.Strategic
-	local radius = m.kind == "nuke" and S.NukeRadius or S.AirstrikeRadius
-	local destroyed = {}
+	local w = Config.Weapons[m.kind]
+	local radius = w.radius
+	-- structures
+	local struck = {}
 	ctx.Buildings.near(m.to, radius, function(b)
-		if b.owner ~= m.nation and not ctx.Diplomacy.allied(m.nation, b.owner) then
-			destroyed[#destroyed + 1] = b.cell
-		end
+		if b.owner ~= m.nation and not ctx.Diplomacy.allied(m.nation, b.owner) then struck[#struck + 1] = b.cell end
 	end)
-	for _, cell in ipairs(destroyed) do ctx.Buildings.destroy(cell) end
-	if m.kind == "nuke" then
-		local hits = {}
-		local fallout = {}
-		Map:disc(m.to, S.NukeRadius, function(i)
+	for _, cell in ipairs(struck) do
+		if w.destroys then
+			ctx.Buildings.destroy(cell)
+		elseif w.disable then
+			ctx.Buildings.disable(cell, ctx.now() + w.disable)
+		end
+	end
+	-- troops
+	if w.troopKill then
+		local hits, fallout = {}, {}
+		Map:disc(m.to, radius, function(i)
 			local o = Territory.ownerOf(i)
-			if o &gt; 0 and o ~= m.nation then
+			if o &gt; 0 and o ~= m.nation and not ctx.Diplomacy.allied(m.nation, o) then
 				hits[o] = (hits[o] or 0) + 1
-				if Map:distance(i, m.to) &lt;= S.NukeFalloutRadius then fallout[#fallout + 1] = i end
+				if w.fallout and Map:distance(i, m.to) &lt;= w.fallout then fallout[#fallout + 1] = i end
 			end
 		end)
 		for o, count in pairs(hits) do
 			local victim = ctx.Nations.get(o)
 			if victim then
 				local density = victim.troops / math.max(1, victim.land)
-				victim.troops = math.max(0, victim.troops - density * count * 2)
-				ctx.notify(o, "☢ Ataque nuclear em seu território!", "war")
+				victim.troops = math.max(0, victim.troops - density * count * w.troopKill)
+				ctx.notify(o, w.icon .. " " .. w.name .. " atingiu seu território!", "war")
 			end
 		end
 		for _, i in ipairs(fallout) do Territory.setOwner(i, 0) end
-		-- fronts passing through the blast are wiped out
 		for _, o in ipairs(ctx.Expansion.activeOrders()) do
-			if o.front and o.nation ~= m.nation and Map:distance(o.front, m.to) &lt;= S.NukeRadius then
-				o.troops = o.troops * 0.2
+			if o.front and o.nation ~= m.nation and Map:distance(o.front, m.to) &lt;= radius then
+				o.troops = o.troops * (w.fallout and 0.2 or 0.5)
 			end
 		end
-	else
+	elseif w.troopShare then
 		local o = Territory.ownerOf(m.to)
 		local victim = o &gt; 0 and ctx.Nations.get(o)
-		if victim then victim.troops = victim.troops * (1 - S.AirstrikeTroopDamage) end
+		if victim then victim.troops = victim.troops * (1 - w.troopShare) end
+	end
+	if w.disable then
+		local o = Territory.ownerOf(m.to)
+		if o &gt; 0 then ctx.notify(o, "⚡ EMP: construções desligadas por " .. w.disable .. " s.", "war") end
 	end
 end
 
@@ -3123,7 +3516,7 @@ function StrategicService.snapshot()
 end
 
 return StrategicService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000018"><Properties><string name="Name">TerritoryService</string><ProtectedString name="Source">-- Mundial War · authoritative ownership of every cell.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000019"><Properties><string name="Name">TerritoryService</string><ProtectedString name="Source">-- Mundial War · authoritative ownership of every cell.
 -- owner[i]: -1 water (never ownable), 0 neutral land, &gt;0 nation id.
 -- Keeps per-nation owned/border sets so nothing ever scans the whole map per capture.
 local TerritoryService = {}
@@ -3470,7 +3863,7 @@ function TerritoryService.landShare(nid)
 end
 
 return TerritoryService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000019"><Properties><string name="Name">World</string><ProtectedString name="Source">-- Mundial War · wires the services together and runs the fixed-step scheduler.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001A"><Properties><string name="Name">World</string><ProtectedString name="Source">-- Mundial War · wires the services together and runs the fixed-step scheduler.
 -- Pure Lua: init.server.lua feeds it Roblox time and players; tests feed it a fake clock.
 local World = {}
 World.__index = World
@@ -3486,6 +3879,7 @@ function World.new(deps)
 	local ctx = {
 		Config = deps.Config, Palette = deps.Palette, Protocol = deps.Protocol,
 		Map = deps.Map or deps.MapGrid.new(deps.MapData),
+		Stats = deps.BuildingStats,
 		random = deps.random or math.random,
 		outbox = {},
 		fullResync = false,
@@ -3542,6 +3936,7 @@ function World:step(dt, humanCount, clock)
 		ctx.Combat.tick(T.Simulation)
 		ctx.Naval.tick(T.Simulation)
 		ctx.Strategic.tick(T.Simulation)
+		ctx.Buildings.tick()
 		ctx.Bots.tick()
 	end
 	if t.econ &gt;= T.Economy then
@@ -3597,14 +3992,14 @@ function World:initPayload(userId)
 		if n.alive then nations[#nations + 1] = ctx.Nations.publicInfo(n) end
 	end
 	local you = ctx.Nations.forUser(userId)
-	local fleets, warships = ctx.Naval.snapshot()
+	local fleets, boats = ctx.Naval.snapshot()
 	return {
 		k = ctx.Protocol.Events.Init,
 		owners = ctx.Territory.snapshotRuns(),
 		nations = nations,
 		buildings = ctx.Buildings.snapshot(),
 		relations = ctx.Diplomacy.snapshot(),
-		fleets = fleets, warships = warships,
+		fleets = fleets, boats = boats,
 		missiles = ctx.Strategic.snapshot(),
 		match = ctx.Match.publicView(),
 		you = you and you.alive and you.id or nil,
@@ -3635,12 +4030,11 @@ end
 
 function World:ordersPayload()
 	local ctx = self.ctx
-	local _, warships = ctx.Naval.snapshot()
 	local payload = {
 		k = ctx.Protocol.Events.Orders,
 		orders = ctx.Expansion.publicView(),
 		fleets = ctx.Naval.publicView(),
-		warships = warships,
+		boats = ctx.Naval.boatView(),
 	}
 	if ctx.Config.DEBUG_MODE then payload.bots = ctx.Bots.debugView() end
 	return payload
@@ -3671,7 +4065,7 @@ function World:privatePayload(userId)
 end
 
 return World
-</ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX0000001A"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000001B"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="LocalScript" referent="RBX0000001C"><Properties><string name="Name">MundialWar</string><ProtectedString name="Source">-- Mundial War · client bootstrap: full-screen strategic map, HUD, input and replication.
+</ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX0000001B"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX0000001C"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="LocalScript" referent="RBX0000001D"><Properties><string name="Name">MundialWar</string><ProtectedString name="Source">-- Mundial War · client bootstrap: full-screen strategic map, HUD, input and replication.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
@@ -3681,6 +4075,7 @@ local Config = require(Shared.GameConfig)
 local Protocol = require(Shared.Protocol)
 local Palette = require(Shared.Palette)
 local MapGrid = require(Shared.MapGrid)
+local BuildingStats = require(Shared.BuildingStats)
 
 local ClientState = require(script.ClientState)
 local MapRenderer = require(script.MapRenderer)
@@ -3715,7 +4110,7 @@ local commandRemote = remotes:WaitForChild(Protocol.CommandRemote)
 local eventRemote = remotes:WaitForChild(Protocol.EventRemote)
 
 local Map = MapGrid.new(require(Shared.MapData))
-local state = ClientState.new(Map, Protocol, Config, Palette)
+local state = ClientState.new(Map, Protocol, Config, Palette, BuildingStats)
 
 -- Screen layout: the ocean-coloured viewport is the whole screen; the world frame moves inside it.
 local gui = Instance.new("ScreenGui")
@@ -3748,8 +4143,10 @@ local function send(action, a, b)
 end
 
 -- Interaction state ------------------------------------------------------------------------
-local mode = nil          -- nil | "build" | "nuke" | "airstrike" | "warship"
-local buildKind = nil
+local mode = nil          -- nil | "build" | "weapon" | "patrol"
+local buildKind = nil     -- building kind (build mode) or weapon kind (weapon mode)
+local patrolBoat = nil    -- boat id while choosing where it patrols
+local selectedCell = nil  -- own building whose reach is being shown
 local pending = nil       -- { cell, at, kind }
 local hud
 
@@ -3758,13 +4155,47 @@ local function clearAim()
 	overlay:setAim(nil, nil)
 end
 
+local updateRanges
 local function setMode(newMode, kind)
 	mode, buildKind = newMode, kind
+	if mode ~= "patrol" then patrolBoat = nil end
 	clearAim()
-	hud:showTray(mode == "build", buildKind)
+	selectedCell = nil
+	hud:showTray(mode == "build", mode == "build" and buildKind or nil)
+	hud:showWeapons(mode == "weapon", mode == "weapon" and buildKind or nil)
 	hud.tools.build.BackgroundColor3 = mode == "build" and Color3.fromRGB(92, 74, 30) or Color3.fromRGB(34, 44, 58)
-	hud.tools.nuke.BackgroundColor3 = mode == "nuke" and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
-	hud.tools.airstrike.BackgroundColor3 = mode == "airstrike" and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
+	hud.tools.weapons.BackgroundColor3 = mode == "weapon" and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
+	updateRanges(nil)
+end
+
+-- Reach circles: where the chosen building/bomb would act, plus our existing defences.
+local hoverCell = nil
+updateRanges = function(cell)
+	if cell ~= nil then hoverCell = cell end
+	local list = {}
+	local gold, red, blue = Color3.fromRGB(240, 196, 92), Color3.fromRGB(235, 90, 80), Color3.fromRGB(120, 200, 255)
+	if mode == "build" then
+		for c, b in pairs(state.buildings) do
+			if b.owner == state.you and Config.Buildings[b.kind].defensive then
+				list[#list + 1] = { c, BuildingStats.reach(Config, b.kind, b.level), blue }
+			end
+		end
+		local r = buildKind and BuildingStats.reach(Config, buildKind, 1)
+		if r and hoverCell and Map.land[hoverCell] then list[#list + 1] = { hoverCell, r, gold } end
+	elseif mode == "weapon" and buildKind then
+		local w = Config.Weapons[buildKind]
+		if w.launcher == "airfield" then
+			for c, b in pairs(state.buildings) do
+				if b.owner == state.you and b.kind == "airfield" then list[#list + 1] = { c, BuildingStats.reach(Config, "airfield", b.level), blue } end
+			end
+		end
+		if hoverCell then list[#list + 1] = { hoverCell, w.radius, red } end
+	elseif selectedCell and state.buildings[selectedCell] then
+		local b = state.buildings[selectedCell]
+		local r = BuildingStats.reach(Config, b.kind, b.level)
+		if r then list[#list + 1] = { selectedCell, r, gold } end
+	end
+	overlay:setRanges(list)
 end
 
 local function nationName(id)
@@ -3820,6 +4251,10 @@ end
 
 local function handleClick(p, button)
 	hud:hidePopover()
+	if not mode and selectedCell then
+		selectedCell = nil
+		updateRanges(nil)
+	end
 	local cell = camera:screenToCell(p)
 	if not cell then return end
 	local owner = state.owner[cell]
@@ -3839,24 +4274,36 @@ local function handleClick(p, button)
 		return
 	end
 
-	if mode == "build" and buildKind then
-		send(Actions.Build, cell, buildKind)
+	if mode == "build" then
+		if buildKind then send(Actions.Build, cell, buildKind) else hud:toast("Escolha uma construção na lista.") end
 		return
-	elseif mode == "warship" then
-		send(Actions.Warship, cell)
+	elseif mode == "patrol" then
+		if Map.land[cell] then hud:toast("Escolha um ponto na água para o barco patrulhar.", "bad") return end
+		send(Actions.Patrol, patrolBoat, cell)
 		setMode(nil)
 		return
-	elseif mode == "nuke" or mode == "airstrike" then
+	elseif mode == "weapon" then
+		if not buildKind then hud:toast("Escolha uma arma na lista.") return end
+		local w = Config.Weapons[buildKind]
 		local now = os.clock()
-		if pending and pending.kind == mode and Map:distance(pending.cell, cell) &lt;= Config.View.ConfirmRadius
+		if pending and pending.kind == "weapon" and Map:distance(pending.cell, cell) &lt;= Config.View.ConfirmRadius
 			and now - pending.at &lt;= Config.View.ConfirmTimeout then
-			send(mode == "nuke" and Actions.Nuke or Actions.Airstrike, pending.cell)
+			send(Actions.Weapon, pending.cell, buildKind)
 			setMode(nil)
 			return
 		end
-		pending = { cell = cell, at = now, kind = mode }
-		local price = mode == "nuke" and Config.Strategic.NukeGold or Config.Strategic.AirstrikeGold
-		overlay:setAim(nil, cell, string.format("Clique de novo para lançar %s · 💰 %s", mode == "nuke" and "☢" or "✈", Protocol.formatK(price)), Color3.fromRGB(255, 90, 80))
+		pending = { cell = cell, at = now, kind = "weapon" }
+		overlay:setAim(nil, cell, string.format("Clique de novo para lançar %s %s · 💰 %s", w.icon, w.name, Protocol.formatK(w.gold)), Color3.fromRGB(255, 90, 80))
+		return
+	end
+
+	-- clicking one of our boats selects it; the next click on water sets its patrol
+	local mx, my = camera:screenToMap(p)
+	local boat = state:boatNear(state.you, mx, my, math.max(1.5, 12 / camera.scale))
+	if boat then
+		setMode("patrol")
+		patrolBoat = boat[1]
+		hud:toast("Barco selecionado: clique na água onde ele deve patrulhar.")
 		return
 	end
 
@@ -3865,11 +4312,20 @@ local function handleClick(p, button)
 		local b = state.buildings[cell]
 		if b then
 			local def = Config.Buildings[b.kind]
+			local body = def.purpose .. "\n" .. table.concat(BuildingStats.lines(Config, b.kind, b.level), " · ")
+			if b.off then body = "⚡ Desligada por EMP.\n" .. body end
 			local buttons = {}
-			if b.kind == "port" then
-				buttons[1] = { "🚢 Navio de guerra", function() send(Actions.Warship, cell) end }
+			local cost = BuildingStats.upgradeCost(Config, b.kind, b.level)
+			if cost then
+				body = body .. "\nNível " .. (b.level + 1) .. ": " .. table.concat(BuildingStats.lines(Config, b.kind, b.level + 1), " · ")
+				buttons[#buttons + 1] = { "⬆ Melhorar · 💰 " .. Protocol.formatK(cost), function() send(Actions.Upgrade, cell) end }
 			end
-			hud:showPopover(p, def.icon .. " " .. def.name, def.description, buttons)
+			if b.kind == "port" then
+				buttons[#buttons + 1] = { "🚢 Barco · 💰 " .. Protocol.formatK(Config.Naval.BoatGold), function() send(Actions.Warship, cell) end }
+			end
+			hud:showPopover(p, def.icon .. " " .. def.name .. " · Nível " .. b.level, body, buttons)
+			selectedCell = cell
+			updateRanges(nil)
 		end
 		return
 	end
@@ -3918,8 +4374,10 @@ end
 local helpText = table.concat({
 	"&lt;b&gt;Objetivo:&lt;/b&gt; dominar " .. math.floor(Config.Match.VictoryPercent * 100) .. "% das terras do mundo.",
 	"&lt;b&gt;Começar:&lt;/b&gt; clique numa terra livre para fundar sua capital.",
-	"&lt;b&gt;Expandir/atacar:&lt;/b&gt; escolha o % de tropas, clique no destino e clique de novo para confirmar. A fronteira avança sozinha.",
-	"&lt;b&gt;Mar:&lt;/b&gt; construa um porto e clique numa costa do outro lado.",
+	"&lt;b&gt;Expandir/atacar:&lt;/b&gt; escolha o % de tropas e clique no destino. A fronteira avança sozinha.",
+	"&lt;b&gt;Construções:&lt;/b&gt; 🏗 mostra para que serve cada uma e o alcance no mapa. Clique numa construção sua para melhorar o nível.",
+	"&lt;b&gt;Mar:&lt;/b&gt; construa um porto e clique numa costa do outro lado. No porto, compre barcos de defesa; clique num barco e depois na água para escolher a patrulha.",
+	"&lt;b&gt;Bombas:&lt;/b&gt; 💣 aparece quando você tem base aérea ou silo. Clique no alvo e confirme com um segundo clique.",
 	"&lt;b&gt;Câmera:&lt;/b&gt; arraste para mover, roda do mouse/pinça para zoom, WASD, F para ver o mundo, Espaço para sua capital.",
 	"&lt;b&gt;Atalhos:&lt;/b&gt; 1–5 percentual, B construir, Esc cancelar, botão direito numa nação para diplomacia.",
 }, "\n")
@@ -3933,15 +4391,17 @@ hud = HUD.new(state, gui, {
 	onCancel = function() send(Actions.Cancel, nil) end,
 	onTool = function(name)
 		if name == "build" then setMode(mode ~= "build" and "build" or nil)
-		elseif name == "nuke" or name == "airstrike" then
-			setMode(mode ~= name and name or nil)
-			if mode then hud:toast(name == "nuke" and "Escolha o alvo do míssil nuclear." or "Escolha um alvo inimigo para o ataque aéreo.") end
+		elseif name == "weapons" then
+			setMode(mode ~= "weapon" and "weapon" or nil)
 		elseif name == "ranking" then hud:toggleRanking()
 		elseif name == "fit" then camera:fit()
 		elseif name == "help" then hud:showCenter("Mundial War", helpText, true) end
 	end,
 	onBuild = function(kind)
 		if buildKind == kind then setMode("build", nil) else setMode("build", kind) end
+	end,
+	onWeapon = function(kind)
+		if buildKind == kind then setMode("weapon", nil) else setMode("weapon", kind) end
 	end,
 })
 
@@ -3950,6 +4410,7 @@ InputController.new(camera, Config, {
 	onKey = handleKey,
 	onHover = function(p)
 		if debugOverlay then debugOverlay:hover(p) end
+		if mode == "build" or mode == "weapon" then updateRanges(camera:screenToCell(p)) end
 	end,
 })
 
@@ -3960,8 +4421,10 @@ task.spawn(function()
 		local text
 		if mode == "build" then
 			text = buildKind and ("🏗 " .. Config.Buildings[buildKind].name .. " — clique numa célula sua · Esc sai") or "🏗 Escolha uma construção"
-		elseif mode == "nuke" or mode == "airstrike" then
-			text = (mode == "nuke" and "☢ Alvo nuclear" or "✈ Alvo do ataque aéreo") .. " · Esc cancela"
+		elseif mode == "weapon" then
+			text = buildKind and (Config.Weapons[buildKind].icon .. " Escolha o alvo · Esc cancela") or "💣 Escolha uma arma"
+		elseif mode == "patrol" then
+			text = "🚢 Clique na água onde o barco deve patrulhar · Esc cancela"
 		elseif phase == "spawn" then
 			local left = math.ceil(state:timeLeft())
 			text = state.you and ("A guerra começa em " .. left .. "s") or ("Clique numa terra livre para fundar sua nação · " .. left .. "s")
@@ -4044,7 +4507,7 @@ state:on("nationList", function()
 end)
 
 send(Actions.Sync)
-</ProtectedString><token name="RunContext">0</token></Properties><Item class="ModuleScript" referent="RBX0000001D"><Properties><string name="Name">CameraController</string><ProtectedString name="Source">-- Mundial War · strategy camera over the 2D map: pan, zoom toward the cursor, bounds.
+</ProtectedString><token name="RunContext">0</token></Properties><Item class="ModuleScript" referent="RBX0000001E"><Properties><string name="Name">CameraController</string><ProtectedString name="Source">-- Mundial War · strategy camera over the 2D map: pan, zoom toward the cursor, bounds.
 -- The map frame is moved/resized; nothing in the 3D world is involved.
 local CameraController = {}
 CameraController.__index = CameraController
@@ -4166,13 +4629,13 @@ function CameraController:lod()
 end
 
 return CameraController
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001E"><Properties><string name="Name">ClientState</string><ProtectedString name="Source">-- Mundial War · client-side mirror of what the server replicates. Renders only; decides nothing.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001F"><Properties><string name="Name">ClientState</string><ProtectedString name="Source">-- Mundial War · client-side mirror of what the server replicates. Renders only; decides nothing.
 local ClientState = {}
 ClientState.__index = ClientState
 
-function ClientState.new(Map, Protocol, Config, Palette)
+function ClientState.new(Map, Protocol, Config, Palette, Stats)
 	local self = setmetatable({}, ClientState)
-	self.Map, self.Protocol, self.Config, self.Palette = Map, Protocol, Config, Palette
+	self.Map, self.Protocol, self.Config, self.Palette, self.Stats = Map, Protocol, Config, Palette, Stats
 	self.owner = {}
 	for i = 1, Map.N do self.owner[i] = Map.land[i] and 0 or -1 end
 	self.nations = {}          -- id -&gt; { info + troops, land, labelCell, labelSize }
@@ -4180,7 +4643,7 @@ function ClientState.new(Map, Protocol, Config, Palette)
 	self.relations = {}        -- "a:b" -&gt; kind
 	self.orders = {}           -- list { id, nation, target, troops, front, anchor, origin }
 	self.fleets = {}           -- id -&gt; { id, nation, troops, path, speed, target, progress, t0 }
-	self.warships = {}
+	self.boats = {}           -- list { id, nation, x, y, health, patrolCell, level }
 	self.missiles = {}         -- id -&gt; { id, kind, nation, from, to, speed, progress, t0 }
 	self.match = { phase = "waiting", round = 0, left = 0 }
 	self.matchAt = 0
@@ -4226,7 +4689,7 @@ function ClientState:applyInit(data)
 		self.nations[info.id] = info
 	end
 	self.buildings = {}
-	for _, b in ipairs(data.buildings) do self.buildings[b[1]] = { kind = b[2], owner = b[3] } end
+	for _, b in ipairs(data.buildings) do self.buildings[b[1]] = { kind = b[2], owner = b[3], level = b[4] or 1, off = b[5] == true } end
 	self.relations = {}
 	for _, r in ipairs(data.relations) do self.relations[key(r[1], r[2])] = r[3] end
 	self.orders = {}
@@ -4235,7 +4698,7 @@ function ClientState:applyInit(data)
 	for _, f in ipairs(data.fleets or {}) do
 		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = f[7], t0 = now }
 	end
-	self.warships = data.warships or {}
+	self.boats = data.boats or {}
 	self.missiles = {}
 	for _, m in ipairs(data.missiles or {}) do
 		self.missiles[m[1]] = { id = m[1], kind = m[2], nation = m[3], from = m[4], to = m[5], speed = m[6], progress = m[7], t0 = now }
@@ -4260,7 +4723,7 @@ function ClientState:applyDelta(data)
 	end
 	if data.b then
 		for _, b in ipairs(data.b) do
-			if b[2] then self.buildings[b[1]] = { kind = b[2], owner = b[3] } else self.buildings[b[1]] = nil end
+			if b[2] then self.buildings[b[1]] = { kind = b[2], owner = b[3], level = b[4] or 1, off = b[5] == true } else self.buildings[b[1]] = nil end
 		end
 		self:fire("buildings")
 	end
@@ -4312,7 +4775,7 @@ function ClientState:applyOrders(data)
 			if f then f.troops, f.progress, f.t0 = row[3], row[4], now end
 		end
 	end
-	if data.warships then self.warships = data.warships end
+	if data.boats then self.boats = data.boats end
 	if data.bots then self.botStates = data.bots end
 	self:fire("orders")
 end
@@ -4351,6 +4814,18 @@ function ClientState:timeLeft()
 	return math.max(0, (self.match.left or 0) - (os.clock() - self.matchAt))
 end
 
+-- Own boat closest to map point (x, y) within `radius` cells, or nil.
+function ClientState:boatNear(nid, x, y, radius)
+	local best, bestD = nil, radius * radius
+	for _, b in ipairs(self.boats) do
+		if b[2] == nid then
+			local d = (b[3] - x) ^ 2 + (b[4] - y) ^ 2
+			if d &lt;= bestD then best, bestD = b, d end
+		end
+	end
+	return best
+end
+
 -- Nearest cell of `nid` to `cell` that touches other land (arrow origin for an order).
 function ClientState:nearestBorder(nid, cell)
 	local Map, owner = self.Map, self.owner
@@ -4367,7 +4842,7 @@ function ClientState:nearestBorder(nid, cell)
 end
 
 return ClientState
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001F"><Properties><string name="Name">DebugOverlay</string><ProtectedString name="Source">-- Mundial War · DEBUG_MODE overlay: cell under cursor, chunk grid, orders and bot states.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000020"><Properties><string name="Name">DebugOverlay</string><ProtectedString name="Source">-- Mundial War · DEBUG_MODE overlay: cell under cursor, chunk grid, orders and bot states.
 -- Only created when the server says GameConfig.DEBUG_MODE is on.
 local DebugOverlay = {}
 DebugOverlay.__index = DebugOverlay
@@ -4444,7 +4919,7 @@ function DebugOverlay:hover(p)
 end
 
 return DebugOverlay
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000020"><Properties><string name="Name">HUD</string><ProtectedString name="Source">-- Mundial War · minimal interface around the map: player card, troop %, tools, ranking,
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000021"><Properties><string name="Name">HUD</string><ProtectedString name="Source">-- Mundial War · minimal interface around the map: player card, troop %, tools, ranking,
 -- popovers and notices. Everything sits on the screen edges; the map stays the screen.
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -4534,7 +5009,7 @@ function HUD.new(state, gui, handlers)
 	make("UIPadding", tools, { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5) })
 	self.tools = {}
 	local toolList = {
-		{ "build", "🏗", "Construir" }, { "airstrike", "✈", "Ataque aéreo" }, { "nuke", "☢", "Míssil nuclear" },
+		{ "build", "🏗", "Construir" }, { "weapons", "💣", "Bombas e ataques" },
 		{ "ranking", "🏆", "Ranking" }, { "fit", "🌍", "Ver o mundo" }, { "help", "?", "Ajuda" },
 	}
 	for index, t in ipairs(toolList) do
@@ -4542,26 +5017,31 @@ function HUD.new(state, gui, handlers)
 		b.Activated:Connect(function() self.h.onTool(t[1]) end)
 		self.tools[t[1]] = b
 	end
-	-- weapons appear only after building their launcher
-	self.tools.airstrike.Visible = false
-	self.tools.nuke.Visible = false
+	-- weapons appear only after building an air base or a silo
+	self.tools.weapons.Visible = false
 
-	-- Build tray (above the tools) -----------------------------------------------------------
-	self.tray = panel(gui, { Name = "BuildTray", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -60), Size = UDim2.fromOffset(300, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 30 })
-	make("UIPadding", self.tray, { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) })
-	make("UIGridLayout", self.tray, { CellSize = UDim2.fromOffset(141, 44), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder })
-	self.trayButtons = {}
-	for index, kind in ipairs(self.Config.BuildingOrder) do
-		local def = self.Config.Buildings[kind]
-		local b = button(self.tray, "", { LayoutOrder = index, ZIndex = 31, TextSize = 12 })
-		b.RichText = true
-		b.TextXAlignment = Enum.TextXAlignment.Left
-		make("UIPadding", b, { PaddingLeft = UDim.new(0, 8) })
-		b.Activated:Connect(function() self.h.onBuild(kind) end)
-		self.trayButtons[kind] = b
-		b:SetAttribute("Name", def.icon .. " " .. def.name)
+	-- Build and weapon trays (above the tools): a grid of choices plus an explanation line ----
+	local function tray(name, order, defs, onPick)
+		local t = panel(gui, { Name = name, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -60), Size = UDim2.fromOffset(300, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 30 })
+		make("UIPadding", t, { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) })
+		make("UIListLayout", t, { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+		local grid = make("Frame", t, { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 31 })
+		make("UIGridLayout", grid, { CellSize = UDim2.fromOffset(141, 44), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+		local buttons = {}
+		for index, kind in ipairs(order) do
+			local b = button(grid, "", { LayoutOrder = index, ZIndex = 31, TextSize = 12 })
+			b.RichText = true
+			b.TextXAlignment = Enum.TextXAlignment.Left
+			make("UIPadding", b, { PaddingLeft = UDim.new(0, 8) })
+			b.Activated:Connect(function() onPick(kind) end)
+			buttons[kind] = b
+		end
+		local info = make("TextLabel", t, { LayoutOrder = 2, BackgroundTransparency = 1, TextColor3 = MUTED, Font = FONT, TextSize = 12, TextWrapped = true, RichText = true,
+			TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Text = "", ZIndex = 31 })
+		return t, buttons, info
 	end
-	self.trayInfo = make("TextLabel", self.tray, { LayoutOrder = 99, BackgroundTransparency = 1, TextColor3 = MUTED, Font = FONT, TextSize = 11, TextWrapped = true, Text = "Escolha e clique numa célula sua.", ZIndex = 31 })
+	self.tray, self.trayButtons, self.trayInfo = tray("BuildTray", self.Config.BuildingOrder, self.Config.Buildings, function(kind) self.h.onBuild(kind) end)
+	self.weaponTray, self.weaponButtons, self.weaponInfo = tray("WeaponTray", self.Config.WeaponOrder, self.Config.Weapons, function(kind) self.h.onWeapon(kind) end)
 
 	-- Top banner (phase / mode) and notices -------------------------------------------------
 	self.banner = panel(gui, { Name = "Banner", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 20, Visible = false })
@@ -4669,10 +5149,10 @@ function HUD:refreshMe()
 	end
 	self.cancelButton.Visible = mine &gt; 0
 	self.cancelButton.Text = mine &gt; 1 and ("✖" .. mine) or "✖"
-	-- tools only when they can be used
-	self.tools.airstrike.Visible = (me.cooldowns and me.cooldowns.airfield) ~= nil
-	self.tools.nuke.Visible = (me.cooldowns and me.cooldowns.silo) ~= nil
+	-- weapons only once something can launch them
+	self.tools.weapons.Visible = me.cooldowns ~= nil and (me.cooldowns.airfield ~= nil or me.cooldowns.silo ~= nil)
 	if self.tray.Visible then self:refreshTray() end
+	if self.weaponTray.Visible then self:refreshWeapons() end
 end
 
 function HUD:refreshTray()
@@ -4685,9 +5165,37 @@ function HUD:refreshTray()
 		b.BackgroundColor3 = (self.selectedBuild == kind) and Color3.fromRGB(92, 74, 30) or Color3.fromRGB(34, 44, 58)
 		b.TextTransparency = affordable and 0 or 0.35
 	end
-	local def = self.selectedBuild and self.Config.Buildings[self.selectedBuild]
-	self.trayInfo.Text = def and def.description or "Escolha uma construção e clique numa célula sua."
-	self.trayInfo.Size = UDim2.new(1, 0, 0, 30)
+	local kind = self.selectedBuild
+	if kind then
+		local def = self.Config.Buildings[kind]
+		local lines = self.state.Stats.lines(self.Config, kind, 1)
+		self.trayInfo.Text = "&lt;b&gt;" .. def.name .. "&lt;/b&gt;: " .. def.purpose .. "\n" .. table.concat(lines, " · ")
+	else
+		self.trayInfo.Text = "Escolha uma construção para ver para que serve e o alcance; depois clique numa célula sua."
+	end
+end
+
+function HUD:refreshWeapons()
+	local me = self.state.me
+	for kind, b in pairs(self.weaponButtons) do
+		local w = self.Config.Weapons[kind]
+		local ready = me and me.cooldowns and me.cooldowns[w.launcher]
+		local affordable = me and me.gold &gt;= w.gold and ready ~= nil
+		local status = ready == nil and ("requer " .. self.Config.Buildings[w.launcher].name)
+			or (ready &gt; 0 and string.format("recarga %ds", math.ceil(ready)) or ("💰 " .. self.Protocol.formatK(w.gold)))
+		b.Text = string.format("%s &lt;b&gt;%s&lt;/b&gt;\n&lt;font size=\"11\" color=\"%s\"&gt;%s&lt;/font&gt;", w.icon, w.name, affordable and "#f0c45c" or "#8a8f96", status)
+		b.BackgroundColor3 = (self.selectedWeapon == kind) and Color3.fromRGB(120, 48, 44) or Color3.fromRGB(34, 44, 58)
+		b.TextTransparency = affordable and 0 or 0.35
+	end
+	local w = self.selectedWeapon and self.Config.Weapons[self.selectedWeapon]
+	self.weaponInfo.Text = w and ("&lt;b&gt;" .. w.name .. "&lt;/b&gt;: " .. w.purpose .. " Raio " .. w.radius .. ". Clique no alvo e confirme com um segundo clique.")
+		or "Escolha uma arma. Aviões saem da base aérea; bombas EMP, atômica e de hidrogênio, do silo."
+end
+
+function HUD:showWeapons(visible, selected)
+	self.weaponTray.Visible = visible
+	self.selectedWeapon = selected
+	if visible then self:refreshWeapons() end
 end
 
 function HUD:showTray(visible, selected)
@@ -4770,7 +5278,7 @@ function HUD:allianceRequest(fromId, seconds, onAccept, onDecline)
 end
 
 return HUD
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000021"><Properties><string name="Name">InputController</string><ProtectedString name="Source">-- Mundial War · mouse, keyboard and touch → camera moves and map clicks.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000022"><Properties><string name="Name">InputController</string><ProtectedString name="Source">-- Mundial War · mouse, keyboard and touch → camera moves and map clicks.
 -- Never relies on hover for anything essential, so phones and tablets work the same way.
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
@@ -4911,7 +5419,7 @@ function InputController.new(camera, Config, handlers)
 end
 
 return InputController
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000022"><Properties><string name="Name">MapRenderer</string><ProtectedString name="Source">-- Mundial War · paints the territory map. One pixel per cell in a single EditableImage
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000023"><Properties><string name="Name">MapRenderer</string><ProtectedString name="Source">-- Mundial War · paints the territory map. One pixel per cell in a single EditableImage
 -- (one draw call, unaffected by graphics quality). Falls back to pooled row Frames when
 -- EditableImage is unavailable (e.g. "Enable Mesh / Image APIs" not turned on).
 local AssetService = game:GetService("AssetService")
@@ -5183,7 +5691,7 @@ function MapRenderer:flush()
 end
 
 return MapRenderer
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000023"><Properties><string name="Name">OverlayRenderer</string><ProtectedString name="Source">-- Mundial War · everything drawn on top of the territory: nation names, capitals,
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000024"><Properties><string name="Name">OverlayRenderer</string><ProtectedString name="Source">-- Mundial War · everything drawn on top of the territory: nation names, capitals,
 -- structures, fronts, fleets, missiles and the aiming arrow. Items live inside the
 -- world frame with scale positions, so panning costs nothing; sizes follow the zoom (LOD).
 local Players = game:GetService("Players")
@@ -5374,9 +5882,14 @@ function OverlayRenderer:updateBuildings()
 			self.icons[cell] = icon
 			fresh = true
 		end
-		if fresh or icon:GetAttribute("Owner") ~= b.owner then
+		if fresh or icon:GetAttribute("Owner") ~= b.owner or icon:GetAttribute("Level") ~= b.level or icon:GetAttribute("Off") ~= b.off then
 			icon:SetAttribute("Owner", b.owner)
-			icon.BackgroundColor3 = rgb(state.Palette.shade(state:nationColor(b.owner), 0.75))
+			icon:SetAttribute("Level", b.level)
+			icon:SetAttribute("Off", b.off)
+			icon.BackgroundColor3 = b.off and Color3.fromRGB(70, 70, 70) or rgb(state.Palette.shade(state:nationColor(b.owner), 0.75))
+			local badge = icon:FindFirstChild("Level") or make("TextLabel", icon, { Name = "Level", AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromScale(1.15, 1.15), Size = UDim2.fromScale(0.55, 0.55), BackgroundColor3 = INK, TextColor3 = Color3.fromRGB(240, 196, 92), Font = FONT, TextScaled = true, BorderSizePixel = 0, ZIndex = 5 })
+			badge.Text = tostring(b.level)
+			badge.Visible = b.level &gt; 1
 		end
 		if fresh or sizeChanged then
 			icon.Size = UDim2.fromOffset(size, size)
@@ -5460,14 +5973,40 @@ function OverlayRenderer:updateOrders()
 	end
 	release(self.orderItems)
 
-	for _, w in ipairs(state.warships) do
-		local item = pool(self.shipItems, w[1], function()
-			return { icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = "🚢", TextScaled = true, Font = FONT, ZIndex = 5 }) }
+	for _, w in ipairs(state.boats) do
+		local id, nation, x, y, health, patrol = w[1], w[2], w[3], w[4], w[5], w[6]
+		local mine = nation == state.you
+		local item = pool(self.shipItems, id, function()
+			local it = {
+				icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = "🚢", TextScaled = true, Font = FONT, ZIndex = 6 }),
+				bar = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0), BorderSizePixel = 0, BackgroundColor3 = INK, ZIndex = 6 }),
+				ring = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 3 }),
+			}
+			make("Frame", it.bar, { Name = "Fill", BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(110, 200, 130), ZIndex = 7 })
+			make("UICorner", it.ring, { CornerRadius = UDim.new(1, 0) })
+			make("UIStroke", it.ring, { Name = "Stroke", Thickness = 1, Transparency = 0.4 })
+			return it
 		end)
-		item.icon.Position = self:pos(w[3])
-		local s = math.clamp(cam.scale * 1.8, 12, 26)
+		local s = math.clamp(cam.scale * 1.8, 14, 26)
+		local visible = lod &gt;= 1 or mine
+		-- glide between the 0.4 s server updates
+		local info = TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear)
+		TweenService:Create(item.icon, info, { Position = self:posXY(x, y) }):Play()
+		TweenService:Create(item.bar, info, { Position = self:posXY(x, y + 0.9) }):Play()
 		item.icon.Size = UDim2.fromOffset(s, s)
-		item.icon.Visible = lod &gt;= 1 or w[2] == state.you
+		item.icon.Visible = visible
+		item.bar.Size = UDim2.fromOffset(s, 3)
+		item.bar.Visible = visible
+		item.bar.Fill.Size = UDim2.fromScale(math.clamp(health / self.Config.Naval.BoatHealth, 0, 1), 1)
+		item.bar.Fill.BackgroundColor3 = rgb(state:nationColor(nation))
+		-- our own boats show their patrol circle
+		item.ring.Visible = mine and patrol ~= nil
+		if patrol then
+			local r = self.Config.Naval.BoatOrbit + 1
+			item.ring.Position = self:pos(patrol)
+			item.ring.Size = UDim2.fromScale(r * 2 / self.Map.W, r * 2 / self.Map.H)
+			item.ring.Stroke.Color = rgb(state:nationColor(nation))
+		end
 	end
 	release(self.shipItems)
 end
@@ -5512,7 +6051,7 @@ function OverlayRenderer:animate()
 	for id, m in pairs(state.missiles) do
 		local item = pool(self.missileItems, id, function()
 			local it = {
-				icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = m.kind == "nuke" and "☢" or "✈", TextColor3 = Color3.fromRGB(255, 230, 120), TextStrokeTransparency = 0, Font = FONT, TextSize = 20, ZIndex = 9 }),
+				icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = (self.Config.Weapons[m.kind] or { icon = "✈" }).icon, TextColor3 = Color3.fromRGB(255, 230, 120), TextStrokeTransparency = 0, Font = FONT, TextSize = 20, ZIndex = 9 }),
 				target = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 8 }),
 			}
 			make("UICorner", it.target, { CornerRadius = UDim.new(1, 0) })
@@ -5524,7 +6063,7 @@ function OverlayRenderer:animate()
 		local dist = math.max(1, math.sqrt((bx - ax) ^ 2 + (by - ay) ^ 2))
 		local t = math.min(1, (m.progress + (now - m.t0) * m.speed) / dist)
 		item.icon.Position = self:posXY(ax + (bx - ax) * t, ay + (by - ay) * t)
-		local radius = m.kind == "nuke" and self.Config.Strategic.NukeRadius or self.Config.Strategic.AirstrikeRadius
+		local radius = (self.Config.Weapons[m.kind] or { radius = 3 }).radius
 		item.target.Position = self:pos(m.to)
 		item.target.Size = UDim2.fromScale(radius * 2 / Map.W, radius * 2 / Map.H)
 	end
@@ -5532,7 +6071,7 @@ function OverlayRenderer:animate()
 end
 
 function OverlayRenderer:flash(kind, cell, stopped)
-	local radius = kind == "nuke" and self.Config.Strategic.NukeRadius or self.Config.Strategic.AirstrikeRadius
+	local radius = (self.Config.Weapons[kind] or { radius = 3 }).radius
 	local ring = make("Frame", self.layer, {
 		AnchorPoint = Vector2.new(0.5, 0.5), Position = self:pos(cell), ZIndex = 9,
 		BackgroundColor3 = stopped and Color3.fromRGB(120, 200, 255) or Color3.fromRGB(255, 210, 120),
@@ -5543,6 +6082,26 @@ function OverlayRenderer:flash(kind, cell, stopped)
 	local tween = TweenService:Create(ring, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = target, BackgroundTransparency = 1 })
 	tween:Play()
 	tween.Completed:Connect(function() ring:Destroy() end)
+end
+
+-- Reach circles: { { cell, radius, color } } (build preview, selected building, own defences).
+function OverlayRenderer:setRanges(list)
+	self.rangeItems = self.rangeItems or {}
+	for k, r in ipairs(list) do
+		local ring = self.rangeItems[k]
+		if not ring then
+			ring = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 0.88, ZIndex = 3 })
+			make("UICorner", ring, { CornerRadius = UDim.new(1, 0) })
+			make("UIStroke", ring, { Name = "Stroke", Thickness = 1.5, Transparency = 0.15 })
+			self.rangeItems[k] = ring
+		end
+		ring.Visible = true
+		ring.Position = self:pos(r[1])
+		ring.Size = UDim2.fromScale(r[2] * 2 / self.Map.W, r[2] * 2 / self.Map.H)
+		ring.BackgroundColor3 = r[3]
+		ring.Stroke.Color = r[3]
+	end
+	for k = #list + 1, #self.rangeItems do self.rangeItems[k].Visible = false end
 end
 
 -- Aim preview for the two-click order: arrow from our nearest border to the target.

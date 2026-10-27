@@ -1,6 +1,6 @@
-# Mundial War — 1.0
+# Mundial War — 1.1
 
-Jogo de estratégia territorial mundial em tempo real para Roblox. O mapa-múndi é a tela: você funda uma nação, escolhe quantas tropas enviar, clica duas vezes numa direção e vê a fronteira avançar sozinha, até dominar 80% das terras do planeta.
+Jogo de estratégia territorial mundial em tempo real para Roblox. O mapa-múndi é a tela: você funda uma nação, escolhe quantas tropas enviar, clica numa direção e vê a fronteira avançar sozinha, até dominar 80% das terras do planeta.
 
 ## Abrir e publicar
 
@@ -14,33 +14,52 @@ Jogo de estratégia territorial mundial em tempo real para Roblox. O mapa-múndi
 
 1. Ao entrar, você vê o mundo inteiro. Clique em qualquer terra livre (longe das capitais) para fundar sua capital. A fase de escolha dura 25 s; depois a guerra começa. Quem entra depois ou é eliminado pode fundar uma nova nação.
 2. Escolha o percentual de tropas (10/25/50/75/100% ou teclas 1–5).
-3. Clique no destino: aparece uma seta da sua fronteira até o ponto. Clique de novo no mesmo lugar para confirmar. A frente avança em leque na direção escolhida, mais larga quanto mais tropas, e as tropas enviadas vão sendo gastas.
+3. Clique no destino: o avanço começa na hora, com uma seta da sua fronteira até o ponto. A frente avança em leque na direção escolhida, mais larga quanto mais tropas, e as tropas enviadas vão sendo gastas. (Para voltar à confirmação por dois cliques, use `GameConfig.View.TwoClickConfirm = true`.)
 4. Terra livre é barata; território inimigo custa conforme a densidade de tropas do defensor, bunkers, metralhadoras e capital. Atacar uma nação neutra declara guerra.
 5. Água nunca tem dono. Para cruzar o mar, construa um **porto** e clique numa costa do outro lado: a frota segue a rota pela água e desembarca.
-6. Clique com o botão direito (ou toque) numa nação para propor aliança ou declarar guerra. Aliados não podem se atacar.
-7. Vence quem controlar 80% das terras. A rodada seguinte começa sozinha.
+6. No porto, compre **barcos de defesa**. Clique no barco e depois num ponto da água: ele vai até lá e fica patrulhando em volta. Contra quem está em guerra com você, ele afunda barcos de defesa, destrói frotas de invasão que passam e rouba ouro de portos ao alcance.
+7. Clique com o botão direito (ou toque) numa nação para propor aliança ou declarar guerra. Aliados não podem se atacar.
+8. Vence quem controlar 80% das terras. A rodada seguinte começa sozinha.
 
 Câmera: arrastar move, roda do mouse/pinça dá zoom no ponto do cursor, WASD/setas, `F` mostra o mundo, `Espaço` vai para sua capital, `B` abre construções, `Esc` cancela.
 
 ## Construções
 
-| | Ouro | Efeito |
-|---|---:|---|
-| 🏙 Cidade | 1.000 | +25 tropas/s, +15.000 capacidade, +3 ouro/s |
-| 🏭 Fábrica | 1.500 | +25 ouro/s; libera tanques e silo |
-| ⚓ Porto | 1.200 | Litoral. Frotas de invasão e navios de guerra |
-| 🛡 Bunker | 600 | Ataques num raio de 5 custam ×1,8 |
-| 🎯 Torre de sniper | 900 | Frentes inimigas no raio 9 perdem 1,5%/s |
-| 🔫 Metralhadora | 1.100 | Ataques grandes no raio 6 custam até ×2 |
-| 💥 Artilharia | 1.800 | Bombardeia frentes inimigas (raio 14); seus ataques ali custam ×0,8 |
-| 🚜 Fábrica de tanques | 2.500 | −8% no custo de ataque (mín. ×0,6) |
-| ✈ Base aérea | 3.000 | Ataque aéreo até 90 células (1.200 ouro, recarga 30 s) |
-| 📡 Defesa antiaérea | 2.000 | 60% de chance de interceptar mísseis e aviões no raio 14 |
-| ☢ Silo nuclear | 6.000 | Míssil nuclear (8.000 ouro, recarga 90 s por silo) |
+Abra 🏗 e escolha uma construção: o painel diz para que ela serve e o círculo no mapa mostra o alcance onde o cursor está (as defesas que você já tem aparecem em azul). Clique numa construção sua para ver o nível, o que o próximo nível melhora e o botão **Melhorar**. Todas vão do nível 1 ao 5; subir do nível N custa 60% do preço × N.
 
-Cada construção repetida do mesmo tipo custa 35% a mais. Construções capturadas mudam de dono; em terra que vira neutra, são destruídas. Navio de guerra: clique num porto seu (1.500 ouro, até 2 por porto); ataca transportes inimigos que passem a 10 células.
+| | Ouro | Para que serve | Melhora por nível |
+|---|---:|---|---|
+| 🏙 Cidade | 1.000 | +25 tropas/s, +15.000 capacidade, +3 ouro/s | +15 tropas/s, +10.000 capacidade, +3 ouro/s |
+| 🏭 Fábrica | 1.500 | +25 ouro/s; libera tanques e silo | +18 ouro/s |
+| ⚓ Porto | 1.200 | Litoral: invasão pelo mar, até 2 barcos de defesa, +6 ouro/s | +1 barco, +5 ouro/s |
+| 🛡 Bunker | 600 | Alcance 5: ataques custam ×1,8 | +1 alcance, +0,25 no multiplicador |
+| 🎯 Torre de sniper | 900 | Alcance 9: frentes inimigas perdem 1,5%/s | +1,5 alcance, +0,6%/s |
+| 🔫 Metralhadora | 1.100 | Alcance 6: ataques grandes custam até ×2 | +1 alcance, +0,25 no teto |
+| 💥 Artilharia | 1.800 | Alcance 14: frentes inimigas perdem 3% a cada 2 s; seus ataques ali custam ×0,8 | +2 alcance, +1% de dano, −0,04 no custo |
+| 🚜 Fábrica de tanques | 2.500 | Ataques custam −8% (mínimo ×0,6 somando todas) | +3% |
+| ✈ Base aérea | 3.000 | Aviões alcançam 90 células | +20 de alcance |
+| 📡 Defesa antiaérea | 2.000 | Alcance 14: 60% de chance de derrubar aviões e mísseis | +2 alcance, +8% (máx. 95%) |
+| 🚀 Silo de mísseis | 6.000 | Lança EMP, atômica e (nível 3+) hidrogênio | −12% no tempo de recarga |
 
-Todos os números estão em `src/shared/GameConfig.lua`.
+Cada construção nova do mesmo tipo custa 35% a mais. Construções capturadas mudam de dono e mantêm o nível; em terra que vira neutra, são destruídas.
+
+## Barcos de defesa
+
+1.500 ouro, comprados no porto. 100 de vida, alcance 9 e 14 de dano por segundo, mais fortes conforme o nível do porto onde nasceram. Patrulham em volta do ponto que você escolher (precisa ser água ligada ao porto). Atacam apenas nações com quem você está em guerra.
+
+## Bombas e ataques
+
+O botão 💣 aparece quando você tem base aérea ou silo. Escolha a arma, clique no alvo (o círculo vermelho mostra a área) e clique de novo para lançar. A defesa antiaérea do alvo pode derrubar qualquer uma.
+
+| | Ouro | Lançador | Efeito |
+|---|---:|---|---|
+| ✈ Ataque aéreo | 1.200 | Base aérea | Raio 3: destrói construções e mata 6% das tropas do alvo |
+| 💣 Fragmentação | 2.500 | Base aérea | Raio 6: mata muitas tropas, sem destruir construções nem território |
+| ⚡ EMP | 4.000 | Silo | Raio 12: desliga as construções inimigas por 45 s |
+| ☢ Atômica | 8.000 | Silo | Raio 10: destrói construções, mata tropas, centro fica sem dono |
+| ☣ Hidrogênio | 20.000 | Silo nível 3 | Raio 18: a maior explosão |
+
+Todos os números estão em `src/shared/GameConfig.lua`; as contas de nível ficam em `src/shared/BuildingStats.lua`.
 
 ## Mapa e nações
 
@@ -51,7 +70,7 @@ Todos os números estão em `src/shared/GameConfig.lua`.
 ## Arquitetura
 
 ```
-src/shared/   GameConfig, MapData (gerado), MapGrid, Palette, Protocol
+src/shared/   GameConfig, BuildingStats, MapData (gerado), MapGrid, Palette, Protocol
 src/server/   init.server (bootstrap) · World (agenda) · NetworkService (Roblox)
               TerritoryService · NationService · EconomyService · ExpansionService
               CombatService · BuildingService · NavalService · StrategicService
@@ -75,7 +94,7 @@ python3 tests/run_lua.py tests/lua/test_rules.lua tests/lua/test_world.lua tests
 
 Usam a biblioteca Lua 5.4 do sistema (`liblua5.4`), sem Roblox:
 
-- `test_rules`: spawn em terra/água/ocupada, expansão progressiva e conectada, barreira de água, bloqueio de "teletransporte", PvP, alianças, portos e desembarque, nuclear, ataque aéreo e defesa, vitória e nova rodada, validação e limite de comandos.
+- `test_rules`: spawn em terra/água/ocupada, expansão progressiva e conectada, barreira de água, bloqueio de "teletransporte", PvP, alianças, portos e desembarque, níveis das construções, barcos de defesa (combate, patrulha, roubo de ouro), todas as bombas, defesa antiaérea, vitória e nova rodada, validação e limite de comandos.
 - `test_world`: mapa real, bots na própria capital, ritmo (2.500 → ~10.000 tropas em 60 s) e desempenho com 5, 10, 20, 30 e 55 nações.
 - `test_client`: roda o servidor **e** o cliente reais sobre uma emulação mínima da API Roblox (`tests/lua/roblox_mock.lua`), que serializa remotes como o Roblox, confere escritas no EditableImage e simula cliques, zoom, arraste e teclado. `MW_DUMP=pasta` grava a interface para `tests/render_gui.py` desenhar uma captura aproximada.
 
