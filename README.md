@@ -1,70 +1,86 @@
-# Mundial War — Alpha 0.7.1
+# Mundial War — 1.0
 
-Jogo de conquista territorial para Ghost, em duas versões: Roblox e HTML offline. O HTML é uma partida individual independente, sem conexão com Roblox.
+Jogo de estratégia territorial mundial em tempo real para Roblox. O mapa-múndi é a tela: você funda uma nação, escolhe quantas tropas enviar, clica duas vezes numa direção e vê a fronteira avançar sozinha, até dominar 80% das terras do planeta.
 
-## Abrir
+## Abrir e publicar
 
-- **Roblox:** abra `dist/Mundial_War_Alpha_0_7_1.rbxlx` no Studio e inicie Jogar. O arquivo contém os dois scripts, sem depender do place 95206881. Publicação no Roblox continua sendo feita pelo proprietário no Studio.
-- **HTML:** baixe `dist/Mundial_War_HTML_0_7_1.html` e abra em um navegador. Não exige instalação, servidor ou recursos externos. Também há a versão atual em `web/Mundial_War_HTML.html`.
-- O projeto Rojo usa `default.project.json`; instalação manual: script servidor em ServerScriptService e LocalScript em StarterPlayerScripts.
+- **Studio:** abra `dist/Mundial_War.rbxlx` e clique em Jogar. O arquivo já contém todos os scripts.
+- **Rojo:** `rojo serve` usa `default.project.json` (compartilhado em `ReplicatedStorage.MundialWarShared`, servidor em `ServerScriptService.MundialWar`, cliente em `StarterPlayerScripts.MundialWar`).
+- **Publicação:** continua manual, pelo Studio. Este repositório não tem workflows, IDs de place/universe nem segredos.
+- **Ative em Game Settings → Security: "Enable Mesh / Image APIs"** (no site: Creator Dashboard → Configure → Settings). Sem isso o jogo publicado usa o renderizador de reserva (Frames), que funciona, mas é mais pesado. No Studio o modo rápido funciona direto.
+- Defina **Max Players = 55** nas configurações do place (`GameConfig.Match.MaxPlayers` documenta o valor).
 
-## Ajuste 0.7.1
+## Como se joga
 
-Botão Avançar removido. Um clique/toque no destino inicia o avanço; arrastar continua movendo o mapa. Clique em território próprio apenas inspeciona. Construção e modo naval mantêm prioridade. Ataques continuam exigindo guerra declarada. Saves 0.7 permanecem compatíveis.
+1. Ao entrar, você vê o mundo inteiro. Clique em qualquer terra livre (longe das capitais) para fundar sua capital. A fase de escolha dura 25 s; depois a guerra começa. Quem entra depois ou é eliminado pode fundar uma nova nação.
+2. Escolha o percentual de tropas (10/25/50/75/100% ou teclas 1–5).
+3. Clique no destino: aparece uma seta da sua fronteira até o ponto. Clique de novo no mesmo lugar para confirmar. A frente avança em leque na direção escolhida, mais larga quanto mais tropas, e as tropas enviadas vão sendo gastas.
+4. Terra livre é barata; território inimigo custa conforme a densidade de tropas do defensor, bunkers, metralhadoras e capital. Atacar uma nação neutra declara guerra.
+5. Água nunca tem dono. Para cruzar o mar, construa um **porto** e clique numa costa do outro lado: a frota segue a rota pela água e desembarca.
+6. Clique com o botão direito (ou toque) numa nação para propor aliança ou declarar guerra. Aliados não podem se atacar.
+7. Vence quem controlar 80% das terras. A rodada seguinte começa sozinha.
 
-## Referência em vídeo — versão 0.7
+Câmera: arrastar move, roda do mouse/pinça dá zoom no ponto do cursor, WASD/setas, `F` mostra o mundo, `Espaço` vai para sua capital, `B` abre construções, `Esc` cancela.
 
-- Painel flutuante inferior compacto com reserva/capacidade, tropas por segundo, ouro por segundo, percentual de envio e efetivo em avanço.
-- Cores de vegetação, areia, montanha e neve sob territórios semitransparentes. Terreno ilustrativo gerado sobre a silhueta existente; não é relevo geográfico real nem a textura do jogo do vídeo.
-- Nome e reserva sobre o maior bloco conectado de cada nação. Roblox mostra o avatar da conta; HTML offline usa um emblema com inicial. Nomes de outros jogadores aparecem com zoom.
-- Tropas de expedição separadas: iniciar desconta o percentual da reserva uma vez; conquistas consomem o efetivo enviado. Parar ou firmar tratado devolve sobreviventes uma única vez. Ao esgotar o efetivo é preciso enviar outra expedição. Redirecionar contra o mesmo dono usa o efetivo em campo.
-- Linhas de rota naval, tooltip no HTML e avanço com um clique no HTML e no Roblox, sem botão de confirmação.
-- Nascimento dos bots afastado das outras capitais; nenhum recurso pago ou loja fictícia.
-- Saves 0.7 separados dos saves 0.6: a partida anterior não é apagada nem convertida automaticamente.
+## Construções
 
-## Recursos mantidos
-
-- Expansão por expedição a cada 250 ms, na direção selecionada. O avanço considera alvos acessíveis e que cabem no orçamento; uma defesa cara não bloqueia alvos mais baratos.
-- As linhas pretas da referência deixaram de ser canais de água artificiais. A máscara tem 320 × 180 células, 22.043 de terra, e 308 divisões decorativas extraídas da imagem. As divisões são aproximações da ilustração, não fronteiras políticas oficiais.
-- Um clique destaca a célula e inicia a expansão ou o ataque. O marcador na frente mostra as tropas restantes da expedição; a reserva aparece junto ao nome da nação.
-- Cidade, fábrica, bunker e porto têm ícones geométricos no mapa e efeitos reais. O painel da seleção explica os efeitos.
-- Guerra, aliança de 180 segundos e trégua de 90 segundos. Ataques exigem guerra declarada. Bots podem aceitar ou recusar propostas conforme sua força; jogadores no Roblox precisam aceitar. Tratados mantêm as conquistas e interrompem operações entre os participantes. Aliança pode ser rompida por declaração de guerra; trégua não pode.
-- Bots priorizam terras livres, avaliam inimigos mais fracos, constroem e buscam trégua quando pressionados. Portos permitem continuar a conquista entre ilhas.
-- Vitória em 80% das terras; derrota ao perder todas. HTML tem pausa, reinício e salvamento automático local a cada cinco segundos, com restauração na próxima abertura. O navegador precisa permitir armazenamento local.
-- No Roblox, Reiniciar funciona após vitória ou quando não restarem jogadores humanos vivos; não apaga uma partida ativa de outros jogadores. Não há persistência Roblox nesta versão.
-
-## Construções e combate
-
-| Construção | Ouro | Função |
+| | Ouro | Efeito |
 |---|---:|---|
-| Cidade | 500 | +30 tropas/s e +2.000 capacidade |
-| Fábrica | 700 | +35 ouro/s |
-| Bunker | 400 | Dobra a defesa da célula |
-| Porto | 900 | +5 ouro/s e habilita frotas; somente litoral |
+| 🏙 Cidade | 1.000 | +25 tropas/s, +15.000 capacidade, +3 ouro/s |
+| 🏭 Fábrica | 1.500 | +25 ouro/s; libera tanques e silo |
+| ⚓ Porto | 1.200 | Litoral. Frotas de invasão e navios de guerra |
+| 🛡 Bunker | 600 | Ataques num raio de 5 custam ×1,8 |
+| 🎯 Torre de sniper | 900 | Frentes inimigas no raio 9 perdem 1,5%/s |
+| 🔫 Metralhadora | 1.100 | Ataques grandes no raio 6 custam até ×2 |
+| 💥 Artilharia | 1.800 | Bombardeia frentes inimigas (raio 14); seus ataques ali custam ×0,8 |
+| 🚜 Fábrica de tanques | 2.500 | −8% no custo de ataque (mín. ×0,6) |
+| ✈ Base aérea | 3.000 | Ataque aéreo até 90 células (1.200 ouro, recarga 30 s) |
+| 📡 Defesa antiaérea | 2.000 | 60% de chance de interceptar mísseis e aviões no raio 14 |
+| ☢ Silo nuclear | 6.000 | Míssil nuclear (8.000 ouro, recarga 90 s por silo) |
 
-Selecione uma construção e clique em célula sua vazia. Clique novamente no botão para sair do modo de construção. Só uma construção por célula; estruturas capturadas passam a beneficiar o novo dono.
+Cada construção repetida do mesmo tipo custa 35% a mais. Construções capturadas mudam de dono; em terra que vira neutra, são destruídas. Navio de guerra: clique num porto seu (1.500 ouro, até 2 por porto); ataca transportes inimigos que passem a 10 células.
 
-Clique em outra terra para expandir ou atacar. O percentual define as tropas enviadas na nova expedição terrestre ou naval. Parar cancela o avanço. Não há passagem terrestre através do oceano; a operação informa quando não há caminho.
+Todos os números estão em `src/shared/GameConfig.lua`.
 
-Para invadir pelo mar, tenha um porto, selecione a costa de destino e use Invadir. São necessários 250 ouro e ao menos 100 tropas selecionadas. A rota passa somente por água. Uma frota por nação; desembarque custa defesa +50 tropas. Sobreviventes retornam à reserva; se houver tratado com o destino, a frota retorna sem atacar.
+## Mapa e nações
 
-## Otimização
+- Grade de 640 × 320 células (66.822 de terra), projeção Miller, gerada de **Natural Earth 1:50m** (domínio público): 231 países com tamanhos proporcionais, ilhas e arquipélagos. Cada célula conhece seu país.
+- Os 36 maiores países viram nações de IA nascendo na própria capital real; 20 tribos fracas ocupam outros países. A IA expande dentro do próprio país, fecha bolsões, ataca vizinhos mais fracos, defende, recua, constrói e usa portos.
+- Regerar: `python tools/generate_map.py` (lê `data/naturalearth/`, escreve `src/shared/MapData.lua` e `data/world-map.json`).
 
-O motor mantém listas de fronteira e células por dono, sem varrer o mapa inteiro a cada captura. O Roblox transmite a grade completa na sincronização inicial e depois envia as células alteradas; a interface reutiliza faixas de terreno e atualiza apenas linhas afetadas. O HTML mantém terreno em um canvas de cache, repinta células alteradas e seus vizinhos e limita a pintura da tela a 30 fps quando necessário. A simulação pausa em abas HTML ocultas.
+## Arquitetura
 
-## Gerar e verificar
-
-```sh
-python tools/build_release.py
-python tests/test_core.py
-node tests/test_game.js
-node tests/test_ui.js
+```
+src/shared/   GameConfig, MapData (gerado), MapGrid, Palette, Protocol
+src/server/   init.server (bootstrap) · World (agenda) · NetworkService (Roblox)
+              TerritoryService · NationService · EconomyService · ExpansionService
+              CombatService · BuildingService · NavalService · StrategicService
+              DiplomacyService · BotService · MatchService · CommandService
+src/client/   init.client · ClientState · MapRenderer · CameraController
+              OverlayRenderer · InputController · HUD · DebugOverlay
 ```
 
-A geração usa apenas Python padrão. Os testes Lua requerem `liblua5.4`; o teste de interface usa `@napi-rs/canvas`. Não são dependências dos arquivos entregues.
+- **Servidor autoritativo.** O cliente só envia intenções; `CommandService` valida tipo, faixa, posse, rota terrestre, aliança, ouro, recarga e aplica limite de 10 comandos/s.
+- **Território** em vetores por célula com conjuntos de posse e fronteira por nação; nenhuma captura varre o mapa. Água é recusada no único ponto que muda posse.
+- **Rede:** o mapa está no cliente; na entrada vai só a posse comprimida. Depois, mudanças em lote a cada 0,2 s, números das nações a cada 1 s, frentes a cada 0,4 s e dados privados só para o dono.
+- **Renderização:** um pixel por célula num único `EditableImage`, repintando só a área alterada. Não depende de Parts nem da qualidade gráfica. Rótulos, ícones e setas ficam numa camada que acompanha o zoom com 3 níveis de detalhe.
+- **Desempenho medido** (Lua 5.4, 120 s simulados): 5 a 55 nações custam ~0,2–1,1 ms por passo de 0,1 s. A análise de território é dividida entre passos.
+- `GameConfig.DEBUG_MODE = true` mostra célula, país, chunk, dono, ordens e estado dos bots.
 
-`engine/core.lua` e `engine/game.js` contêm as regras, `engine/server_adapter.lua` a conexão Roblox, `web/template.html` e `web/ui.js` a interface web. `tools/trace_reference.py caminho/da/imagem.png` recria a máscara com Pillow, NumPy e SciPy; a imagem original não é necessária para gerar os dois arquivos a partir da máscara já incluída.
+## Testes
 
-Validação executada: sintaxe Lua/JS, expansão e contabilidade, alvos caros/baratos, economia e capacidade, construções, tratados, viagens navais, salvamento/restauração, reinício, derrota, integração da interface HTML com Canvas real e integridade XML do arquivo Roblox. Simulação de 60 segundos no mapa real executada em ambos os motores.
+```sh
+python3 tests/run_lua.py tests/lua/test_rules.lua tests/lua/test_world.lua tests/lua/test_client.lua
+```
 
-**Limites da verificação:** execução no Roblox Studio, multiplayer, gestos em dispositivos físicos e layout em navegador real ainda precisam de teste. O teste Canvas não substitui a verificação de layout do navegador. Os downloads do Chromium falharam no ambiente de desenvolvimento.
+Usam a biblioteca Lua 5.4 do sistema (`liblua5.4`), sem Roblox:
+
+- `test_rules`: spawn em terra/água/ocupada, expansão progressiva e conectada, barreira de água, bloqueio de "teletransporte", PvP, alianças, portos e desembarque, nuclear, ataque aéreo e defesa, vitória e nova rodada, validação e limite de comandos.
+- `test_world`: mapa real, bots na própria capital, ritmo (2.500 → ~10.000 tropas em 60 s) e desempenho com 5, 10, 20, 30 e 55 nações.
+- `test_client`: roda o servidor **e** o cliente reais sobre uma emulação mínima da API Roblox (`tests/lua/roblox_mock.lua`), que serializa remotes como o Roblox, confere escritas no EditableImage e simula cliques, zoom, arraste e teclado. `MW_DUMP=pasta` grava a interface para `tests/render_gui.py` desenhar uma captura aproximada.
+
+**Ainda precisa de teste no Studio:** layout real dos textos e emojis, toque em celular, multiplayer real e o limite de memória do EditableImage em aparelhos fracos. Os testes cobrem regras e integração, não substituem jogar.
+
+## Fora do escopo desta versão
+
+Sons (precisam de assets próprios), trégua/coalizão/transferência de território e persistência entre rodadas.
