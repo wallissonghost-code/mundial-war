@@ -48,8 +48,14 @@ local function findSpawn(countryIndex, preferred)
 	return best
 end
 
+local function thinkInterval(kind)
+	if kind == "tribe" then return Config.Bots.TribeThinkInterval end
+	if ctx.mode == "extreme" then return Config.Bots.ExtremeThinkInterval end
+	return Config.Bots.ThinkInterval
+end
+
 local function register(n, kind, index, total)
-	local interval = kind == "tribe" and Config.Bots.TribeThinkInterval or Config.Bots.ThinkInterval
+	local interval = thinkInterval(kind)
 	bots[n.id] = {
 		nid = n.id, kind = kind, state = S.Expanding,
 		nextThink = ctx.now() + interval * (index / math.max(1, total)),
@@ -91,6 +97,35 @@ function BotService.spawnAll()
 			if n then register(n, p.kind, order, #plan) end
 		end
 	end
+end
+
+-- Conquista Extrema: every country big enough starts as an AI nation that owns all of it.
+function BotService.spawnCountries()
+	local E = Config.Extreme
+	local list = {}
+	for index, c in ipairs(Map.countries) do
+		if countryCells[index] and #countryCells[index] >= E.MinCountryCells then list[#list + 1] = index end
+	end
+	for order, index in ipairs(list) do
+		local c = Map.countries[index]
+		local cells = countryCells[index]
+		local n = ctx.Nations.create("bot", c.name, c.capital, {
+			country = index, cells = cells, troops = E.BaseTroops + #cells * E.TroopsPerCell,
+			gold = E.StartGold, oil = E.StartOil,
+		})
+		if n then register(n, "bot", order, #list) end
+	end
+end
+
+-- A player left a country in Conquista Extrema: the AI governs it again.
+function BotService.adopt(nid)
+	local n = ctx.Nations.get(nid)
+	if n and n.alive then register(n, "bot", 0, 1) end
+end
+
+-- A player took this nation over: stop its AI.
+function BotService.release(nid)
+	bots[nid] = nil
 end
 
 -- Alliance policy when someone asks a bot.
@@ -149,6 +184,15 @@ local function tryBuild(n, b, attacked)
 	if n.land > 800 and Buildings.count(n.id, "artillery") < 1 then wants[#wants + 1] = "artillery" end
 	if n.land > 1200 and Buildings.count(n.id, "airdefense") < 1 then wants[#wants + 1] = "airdefense" end
 	if n.kind == "bot" and n.land > 1500 and Buildings.count(n.id, "tankfactory") < 2 then wants[#wants + 1] = "tankfactory" end
+	if ctx.mode == "extreme" then
+		if Buildings.count(n.id, "oilwell") < 1 + math.floor(n.land / 500) then wants[#wants + 1] = "oilwell" end
+		if attacked then
+			if Buildings.count(n.id, "wall") < 2 + math.floor(n.land / 200) then table.insert(wants, 1, "wall") end
+			if Buildings.count(n.id, "trench") < 1 + math.floor(n.land / 400) then wants[#wants + 1] = "trench" end
+		end
+		if Buildings.count(n.id, "port") > 0 and Buildings.count(n.id, "antinaval") < 1 then wants[#wants + 1] = "antinaval" end
+		if n.land > 600 and Buildings.count(n.id, "flak") < 1 then wants[#wants + 1] = "flak" end
+	end
 	for _, kind in ipairs(wants) do
 		local cost = Buildings.cost(n.id, kind)
 		if n.gold >= cost then
@@ -159,8 +203,8 @@ local function tryBuild(n, b, attacked)
 				tries = tries + 1
 				if tries > 60 then break end
 				local good
-				if kind == "port" then good = Map.coast[i]
-				elseif kind == "bunker" or kind == "tower" then good = Territory.borderCells(n.id)[i] and attacked ~= nil
+				if kind == "port" or kind == "antinaval" then good = Map.coast[i]
+				elseif kind == "bunker" or kind == "tower" or kind == "wall" or kind == "trench" then good = Territory.borderCells(n.id)[i] and attacked ~= nil
 				else good = not Territory.borderCells(n.id)[i] end
 				if good and Buildings.canBuild(n.id, i, kind) then
 					Buildings.build(n.id, i, kind)
@@ -296,8 +340,7 @@ function BotService.tick()
 	local now = ctx.now()
 	for _, b in pairs(bots) do
 		if now >= b.nextThink then
-			local interval = b.kind == "tribe" and Config.Bots.TribeThinkInterval or Config.Bots.ThinkInterval
-			b.nextThink = now + interval
+			b.nextThink = now + thinkInterval(b.kind)
 			think(b)
 		end
 	end

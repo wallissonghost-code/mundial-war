@@ -51,14 +51,14 @@ function NetworkService.start(theWorld)
 	commandRemote = remote(Protocol.CommandRemote)
 	eventRemote = remote(Protocol.EventRemote)
 
-	commandRemote.OnServerEvent:Connect(function(player, action, a, b)
+	commandRemote.OnServerEvent:Connect(function(player, action, a, b, c)
 		if action == Protocol.Actions.Sync then
 			if ready[player] and ready[player] > os.clock() - 2 then return end -- sync spam guard
 			ready[player] = os.clock()
 			sendInit(player)
 			return
 		end
-		local ok, message = ctx.Commands.handle(player.UserId, player.DisplayName, action, a, b, os.clock())
+		local ok, message = ctx.Commands.handle(player.UserId, player.DisplayName, action, a, b, os.clock(), c)
 		if message then
 			eventRemote:FireClient(player, { k = Protocol.Events.Notice, text = message, kind = ok and "good" or "bad" })
 		end
@@ -69,7 +69,11 @@ function NetworkService.start(theWorld)
 		ctx.Commands.forget(player.UserId)
 		local n = ctx.Nations.forUser(player.UserId)
 		if n and n.alive then
-			ctx.Nations.eliminate(n.id, "left")
+			if ctx.mode == "extreme" then
+				ctx.Nations.returnToAI(n.id)
+			else
+				ctx.Nations.eliminate(n.id, "left")
+			end
 		end
 	end)
 end

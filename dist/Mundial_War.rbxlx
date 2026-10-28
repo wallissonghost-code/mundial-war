@@ -11,6 +11,7 @@ function BuildingStats.stat(Config, kind, level, field)
 	local v = base + inc * ((level or 1) - 1)
 	if field == "intercept" then v = math.min(0.95, v) end
 	if field == "support" then v = math.max(0.4, v) end
+	if field == "shelter" then v = math.max(0.15, v) end
 	if field == "cooldownFactor" then v = math.max(0.4, v) end
 	return v
 end
@@ -69,6 +70,19 @@ function BuildingStats.lines(Config, kind, level)
 	elseif kind == "silo" then
 		out[#out + 1] = "Recarga ×" .. num(s("cooldownFactor"))
 		if level &gt;= 3 then out[#out + 1] = "Libera bomba de hidrogênio" end
+		if level &gt;= 5 then out[#out + 1] = "Libera o Fim de Era" end
+	elseif kind == "wall" then
+		out[#out + 1] = "Ataques custam ×" .. num(s("defense"))
+	elseif kind == "trench" then
+		out[#out + 1] = "Frentes inimigas perdem " .. pct(s("attrition")) .. "/s"
+		out[#out + 1] = "Você perde ×" .. num(s("shelter")) .. " tropas ao ceder terreno"
+	elseif kind == "antinaval" then
+		out[#out + 1] = num(s("damage")) .. " de dano/s em barcos"
+		out[#out + 1] = "Desembarques custam ×" .. num(s("landing"))
+	elseif kind == "flak" then
+		out[#out + 1] = pct(s("intercept")) .. " de chance de derrubar aviões"
+	elseif kind == "oilwell" then
+		out[#out + 1] = "+" .. num(s("oil")) .. " petróleo/s"
 	end
 	local r = s("radius")
 	if r then table.insert(out, 1, "Alcance: " .. num(r) .. " células") end
@@ -85,11 +99,29 @@ return BuildingStats
 -- Every gameplay number lives here; services must not hard-code tuning values.
 local GameConfig = {}
 
-GameConfig.Version = "1.0.0"
+GameConfig.Version = "1.2.0"
 GameConfig.DEBUG_MODE = false          -- shows cell/chunk/order/bot debug overlays (never enable in production)
+
+-- Game modes ---------------------------------------------------------------
+-- A round opens with a short vote; the most voted mode wins (ties keep the first in ModeOrder).
+GameConfig.Modes = {
+	classic = { name = "Mundial", icon = "🌍",
+		description = "Funde sua nação em qualquer terra livre e cresça a partir de um ponto. Nações de IA nascem nos maiores países." },
+	extreme = { name = "Conquista Extrema", icon = "🔥",
+		description = "Escolha um país inteiro e domine os outros. Todos os países já começam ocupados. Libera muros, trincheiras, anti-naval, antiaérea contra aviões, petróleo, ponte aérea e bomba de fogo." },
+}
+GameConfig.ModeOrder = { "classic", "extreme" }
+GameConfig.Extreme = {
+	MinCountryCells = 6,               -- smaller countries stay as free land
+	BaseTroops = 1500,
+	TroopsPerCell = 12,
+	StartGold = 2500,
+	StartOil = 200,
+}
 
 -- Match flow ---------------------------------------------------------------
 GameConfig.Match = {
+	VoteSeconds = 15,                  -- mode vote at the start of every round (ends early once every player voted)
 	MaxPlayers = 55,                   -- set the same value in Game Settings &gt; Places &gt; Max Players
 	SpawnPhaseSeconds = 25,            -- players pick a start; no expansion yet
 	VictoryPercent = 0.80,             -- share of all land cells
@@ -133,6 +165,12 @@ GameConfig.Gold = {
 	Base = 10,
 	PerCell = 0.1,
 	StartGold = 600,
+}
+
+-- Oil (Conquista Extrema): produced by oil wells, spent on the air bridge, fire bombs and the End of an Era
+GameConfig.Oil = {
+	Base = 0,
+	PerCell = 0.01,
 }
 
 GameConfig.TroopPercents = { 0.10, 0.25, 0.50, 0.75, 1.00 }
@@ -211,9 +249,26 @@ GameConfig.Buildings = {
 		purpose = "Pode derrubar mísseis e aviões inimigos que caiam dentro do alcance." },
 	silo = { name = "Silo de mísseis", icon = "🚀", cost = 6000, requires = "factory", cooldownFactor = 1,
 		perLevel = { cooldownFactor = -0.12 },
-		purpose = "Lança bombas EMP, atômicas e, a partir do nível 3, de hidrogênio. Cada nível recarrega mais rápido." },
+		purpose = "Lança bombas EMP, atômicas, de hidrogênio (nível 3) e o Fim de Era (nível 5). Cada nível recarrega mais rápido." },
+	-- Conquista Extrema only
+	wall = { name = "Muro", icon = "🧱", cost = 400, radius = 2, defense = 3, defensive = true, mode = "extreme",
+		perLevel = { radius = 0.5, defense = 0.6 },
+		purpose = "Barreira curta e barata: atacar perto do muro custa muito mais tropas." },
+	trench = { name = "Trincheira", icon = "🪖", cost = 700, radius = 4, attrition = 0.03, shelter = 0.5, defensive = true, mode = "extreme",
+		perLevel = { radius = 1, attrition = 0.01, shelter = -0.06 },
+		purpose = "Seus soldados se protegem: frentes inimigas perdem tropas a cada segundo e você perde menos ao ceder terreno." },
+	antinaval = { name = "Anti-naval", icon = "🎆", cost = 1600, radius = 10, damage = 20, landing = 2, coastal = true, defensive = true, mode = "extreme",
+		perLevel = { radius = 2, damage = 6, landing = 0.4 },
+		purpose = "Só no litoral. Atira em barcos e frotas inimigas no alcance e encarece desembarques." },
+	flak = { name = "Antiaérea de aviões", icon = "🛩", cost = 1000, radius = 12, intercept = 0.85, defensive = true, mode = "extreme",
+		perLevel = { radius = 2, intercept = 0.03 },
+		purpose = "Especializada em aviões: derruba ataques aéreos, bombas de fragmentação, bombas de fogo e pontes aéreas inimigas. Não para mísseis do silo." },
+	oilwell = { name = "Poço de petróleo", icon = "🛢", cost = 1200, oil = 4, mode = "extreme",
+		perLevel = { oil = 3 },
+		purpose = "Extrai petróleo, usado na ponte aérea, na bomba de fogo e no Fim de Era." },
 }
-GameConfig.BuildingOrder = { "city", "factory", "port", "bunker", "tower", "machinegun", "artillery", "tankfactory", "airfield", "airdefense", "silo" }
+GameConfig.BuildingOrder = { "city", "factory", "port", "bunker", "tower", "machinegun", "artillery", "tankfactory", "airfield", "airdefense", "silo",
+	"wall", "trench", "antinaval", "flak", "oilwell" }
 
 -- Naval ------------------------------------------------------------------------
 GameConfig.Naval = {
@@ -230,6 +285,22 @@ GameConfig.Naval = {
 	BoatDamage = 14,                   -- health per second against enemy boats (+4 per port level)
 	BoatTransportDamage = 0.1,         -- share of a passing enemy transport destroyed per second
 	BoatGoldSteal = 10,                -- gold per second taken from each enemy port in reach
+	-- Cargo ships: every port sends gold ships on trade runs; enemy defence boats capture them
+	CargoInterval = 30,                -- seconds between ships of one port
+	CargoPerPortLevel = 1,             -- ships at sea per port level
+	CargoSpeed = 6,
+	CargoTripCells = 30,               -- how far out the trade run goes
+	CargoValue = 250,                  -- gold delivered when the ship comes home (+60 per port level)
+	CargoValuePerLevel = 60,
+	CargoCaptureFactor = 1.5,          -- a capturing nation receives value * factor
+	-- Air bridge (Conquista Extrema): troops flown from an air base, faster than ships
+	AirliftSpeed = 40,
+	AirliftMaxTroops = 4000,           -- per flight (+2000 per air base level)
+	AirliftMaxPerLevel = 2000,
+	AirliftGold = 500,
+	AirliftOil = 60,
+	AirliftCooldown = 20,
+	AirliftInterceptLoss = 0.6,        -- share of the troops lost when an anti-air shoots the flight
 }
 
 -- Strategic weapons --------------------------------------------------------------
@@ -250,8 +321,21 @@ GameConfig.Weapons = {
 	hydrogen = { name = "Bomba de hidrogênio", icon = "☣", gold = 20000, launcher = "silo", minLevel = 3, cooldown = 150, speed = 24,
 		radius = 18, fallout = 11, troopKill = 2.5, destroys = true,
 		purpose = "A maior explosão. Requer silo nível 3." },
+	firebomb = { name = "Bomba de fogo", icon = "🔥", gold = 3000, oil = 80, launcher = "airfield", aircraft = true, cooldown = 45, speed = 38,
+		radius = 2, fire = { radius = 9, grow = 0.4, seconds = 30, troopBurn = 0.25 }, destroys = false, mode = "extreme",
+		purpose = "Incêndio que se espalha devagar até 9 células: queima tropas a cada segundo e destrói construções que o fogo alcança." },
+	endofera = { name = "Fim de Era", icon = "🌋", gold = 50000, oil = 400, launcher = "silo", minLevel = 5, cooldown = 300, speed = 20,
+		radius = 10, troopKill = 2, warheads = 5, unstoppable = true, destroys = true,
+		fire = { radius = 12, grow = 0.6, seconds = 40, troopBurn = 0.3 }, disable = 60,
+		purpose = "Ogivas múltiplas: atinge o alvo e as capitais de até 4 outros inimigos em guerra com você, com fogo e EMP juntos. Nenhuma antiaérea consegue parar. Requer silo nível 5." },
+	airlift = { name = "Ponte aérea", icon = "🪂", gold = 500, oil = 60, launcher = "airfield", aircraft = true, cooldown = 20, speed = 40,
+		radius = 1, troops = true, mode = "extreme",
+		purpose = "Leva tropas de avião, muito mais rápido que navio, para qualquer terra no alcance da base aérea. Usa o % de tropas escolhido." },
 }
-GameConfig.WeaponOrder = { "airstrike", "cluster", "emp", "atomic", "hydrogen" }
+-- airstrike, cluster and firebomb are aircraft: the flak building can shoot them down
+GameConfig.Weapons.airstrike.aircraft = true
+GameConfig.Weapons.cluster.aircraft = true
+GameConfig.WeaponOrder = { "airlift", "airstrike", "cluster", "firebomb", "emp", "atomic", "hydrogen", "endofera" }
 
 -- Diplomacy ----------------------------------------------------------------------
 GameConfig.Diplomacy = {
@@ -263,6 +347,7 @@ GameConfig.Diplomacy = {
 GameConfig.Bots = {
 	Nations = 36,                      -- largest countries become AI nations at their real capitals
 	Tribes = 20,                       -- small, weak factions in other countries
+	ExtremeThinkInterval = 2.0,        -- Conquista Extrema has ~180 AI countries
 	ThinkInterval = 1.2,               -- each bot; ticks are staggered across bots
 	TribeThinkInterval = 3,
 	AttackWhenStronger = 1.3,          -- troop ratio before picking a fight
@@ -1075,7 +1160,8 @@ Protocol.Actions = {
 	Warship = "warship",       -- (portCell) buy a defence boat
 	Patrol = "patrol",         -- (boatId, waterCell)
 	Upgrade = "upgrade",       -- (cell)
-	Weapon = "weapon",         -- (cell, weaponKind)
+	Weapon = "weapon",         -- (cell, weaponKind, percent) percent is used by the air bridge
+	Vote = "vote",             -- (modeName) during the vote phase
 	Nuke = "nuke",             -- (cell)
 	Airstrike = "airstrike",   -- (cell)
 	Ally = "ally",             -- (nationId) request or accept
@@ -1263,8 +1349,14 @@ local function findSpawn(countryIndex, preferred)
 	return best
 end
 
+local function thinkInterval(kind)
+	if kind == "tribe" then return Config.Bots.TribeThinkInterval end
+	if ctx.mode == "extreme" then return Config.Bots.ExtremeThinkInterval end
+	return Config.Bots.ThinkInterval
+end
+
 local function register(n, kind, index, total)
-	local interval = kind == "tribe" and Config.Bots.TribeThinkInterval or Config.Bots.ThinkInterval
+	local interval = thinkInterval(kind)
 	bots[n.id] = {
 		nid = n.id, kind = kind, state = S.Expanding,
 		nextThink = ctx.now() + interval * (index / math.max(1, total)),
@@ -1306,6 +1398,35 @@ function BotService.spawnAll()
 			if n then register(n, p.kind, order, #plan) end
 		end
 	end
+end
+
+-- Conquista Extrema: every country big enough starts as an AI nation that owns all of it.
+function BotService.spawnCountries()
+	local E = Config.Extreme
+	local list = {}
+	for index, c in ipairs(Map.countries) do
+		if countryCells[index] and #countryCells[index] &gt;= E.MinCountryCells then list[#list + 1] = index end
+	end
+	for order, index in ipairs(list) do
+		local c = Map.countries[index]
+		local cells = countryCells[index]
+		local n = ctx.Nations.create("bot", c.name, c.capital, {
+			country = index, cells = cells, troops = E.BaseTroops + #cells * E.TroopsPerCell,
+			gold = E.StartGold, oil = E.StartOil,
+		})
+		if n then register(n, "bot", order, #list) end
+	end
+end
+
+-- A player left a country in Conquista Extrema: the AI governs it again.
+function BotService.adopt(nid)
+	local n = ctx.Nations.get(nid)
+	if n and n.alive then register(n, "bot", 0, 1) end
+end
+
+-- A player took this nation over: stop its AI.
+function BotService.release(nid)
+	bots[nid] = nil
 end
 
 -- Alliance policy when someone asks a bot.
@@ -1364,6 +1485,15 @@ local function tryBuild(n, b, attacked)
 	if n.land &gt; 800 and Buildings.count(n.id, "artillery") &lt; 1 then wants[#wants + 1] = "artillery" end
 	if n.land &gt; 1200 and Buildings.count(n.id, "airdefense") &lt; 1 then wants[#wants + 1] = "airdefense" end
 	if n.kind == "bot" and n.land &gt; 1500 and Buildings.count(n.id, "tankfactory") &lt; 2 then wants[#wants + 1] = "tankfactory" end
+	if ctx.mode == "extreme" then
+		if Buildings.count(n.id, "oilwell") &lt; 1 + math.floor(n.land / 500) then wants[#wants + 1] = "oilwell" end
+		if attacked then
+			if Buildings.count(n.id, "wall") &lt; 2 + math.floor(n.land / 200) then table.insert(wants, 1, "wall") end
+			if Buildings.count(n.id, "trench") &lt; 1 + math.floor(n.land / 400) then wants[#wants + 1] = "trench" end
+		end
+		if Buildings.count(n.id, "port") &gt; 0 and Buildings.count(n.id, "antinaval") &lt; 1 then wants[#wants + 1] = "antinaval" end
+		if n.land &gt; 600 and Buildings.count(n.id, "flak") &lt; 1 then wants[#wants + 1] = "flak" end
+	end
 	for _, kind in ipairs(wants) do
 		local cost = Buildings.cost(n.id, kind)
 		if n.gold &gt;= cost then
@@ -1374,8 +1504,8 @@ local function tryBuild(n, b, attacked)
 				tries = tries + 1
 				if tries &gt; 60 then break end
 				local good
-				if kind == "port" then good = Map.coast[i]
-				elseif kind == "bunker" or kind == "tower" then good = Territory.borderCells(n.id)[i] and attacked ~= nil
+				if kind == "port" or kind == "antinaval" then good = Map.coast[i]
+				elseif kind == "bunker" or kind == "tower" or kind == "wall" or kind == "trench" then good = Territory.borderCells(n.id)[i] and attacked ~= nil
 				else good = not Territory.borderCells(n.id)[i] end
 				if good and Buildings.canBuild(n.id, i, kind) then
 					Buildings.build(n.id, i, kind)
@@ -1511,8 +1641,7 @@ function BotService.tick()
 	local now = ctx.now()
 	for _, b in pairs(bots) do
 		if now &gt;= b.nextThink then
-			local interval = b.kind == "tribe" and Config.Bots.TribeThinkInterval or Config.Bots.ThinkInterval
-			b.nextThink = now + interval
+			b.nextThink = now + thinkInterval(b.kind)
 			think(b)
 		end
 	end
@@ -1535,7 +1664,7 @@ local chunks = {}          -- chunk key -&gt; { cell = true }
 local disabled = {}        -- cell -&gt; true while an EMP keeps it off
 local CHUNK = 16
 local changes = {}         -- cell -&gt; building or false (for replication)
-local EMPTY = { growth = 0, capacity = 0, gold = 0, attack = 0, count = {} }
+local EMPTY = { growth = 0, capacity = 0, gold = 0, oil = 0, attack = 0, count = {} }
 
 function BuildingService.init(context)
 	ctx = context
@@ -1556,7 +1685,7 @@ end
 local function bucket(nid)
 	local t = totals[nid]
 	if not t then
-		t = { growth = 0, capacity = 0, gold = 0, attack = 0, count = {} }
+		t = { growth = 0, capacity = 0, gold = 0, oil = 0, attack = 0, count = {} }
 		totals[nid] = t
 	end
 	return t
@@ -1571,6 +1700,7 @@ local function economy(b, sign)
 	t.capacity = t.capacity + sign * (Stats.stat(Config, b.kind, level, "capacity") or 0)
 	t.gold = t.gold + sign * (Stats.stat(Config, b.kind, level, "gold") or 0)
 	t.attack = t.attack + sign * (Stats.stat(Config, b.kind, level, "attackBonus") or 0)
+	t.oil = t.oil + sign * (Stats.stat(Config, b.kind, level, "oil") or 0)
 end
 
 local function count(b, sign)
@@ -1655,6 +1785,7 @@ function BuildingService.canBuild(nid, cell, kind)
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
 	if not n or not n.alive then return false, "Você não tem nação." end
 	if not def then return false, "Construção inválida." end
+	if def.mode and def.mode ~= ctx.mode then return false, def.name .. " só existe na Conquista Extrema." end
 	if not Map:valid(cell) or ctx.Territory.ownerOf(cell) ~= nid then
 		return false, "Construa em uma célula do seu território."
 	end
@@ -1841,6 +1972,10 @@ function CombatService.cellCost(attackerId, cell, orderTroops, front)
 		local Buildings = ctx.Buildings
 		local bunker = Buildings.covered(cell, "bunker", target, "defense")
 		if bunker then cost = cost * bunker end
+		local wall = Buildings.covered(cell, "wall", target, "defense")
+		if wall then cost = cost * wall end
+		local shelter = Buildings.covered(cell, "trench", target, "shelter", true)
+		if shelter then defenderLoss = defenderLoss * shelter end
 		local mg = Buildings.covered(cell, "machinegun", target, "maxFactor")
 		if mg then
 			cost = cost * (1 + math.min(mg - 1, (orderTroops or 0) / B.machinegun.massDefense))
@@ -1872,6 +2007,10 @@ function CombatService.tick(dt)
 			local attrition = doTower and ctx.Buildings.covered(order.front, "tower", order.target, "attrition")
 			if attrition then
 				order.troops = order.troops * (1 - attrition * pulseClock)
+			end
+			local trench = doTower and ctx.Buildings.covered(order.front, "trench", order.target, "attrition")
+			if trench then
+				order.troops = order.troops * (1 - trench * pulseClock)
 			end
 			if doArtillery then
 				-- the defender's artillery, or an ally of the defender, shells the front
@@ -1932,7 +2071,7 @@ local function isPercent(v)
 end
 
 -- Returns ok, message (message may be nil for silent actions).
-function CommandService.handle(userId, displayName, action, a, b, clock)
+function CommandService.handle(userId, displayName, action, a, b, clock, c)
 	if type(action) ~= "string" then return false, nil end
 	if not allow(userId, clock or ctx.now()) then return false, nil end
 	local A = ctx.Protocol.Actions
@@ -1940,12 +2079,22 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 	local nation = ctx.Nations.forUser(userId)
 	local nid = nation and nation.alive and nation.id or nil
 
+	if action == A.Vote then
+		if type(a) ~= "string" then return false, "Modo inválido." end
+		return ctx.Match.vote(userId, a)
+	end
+
 	if action == A.Spawn then
 		if nid then return false, "Você já tem uma nação." end
 		if not ctx.Match.canSpawn() then return false, "Não é possível fundar uma nação agora." end
 		if not isInt(a) or not Map:valid(a) then return false, "Célula inválida." end
 		if not ctx.Nations.canRespawn(userId) then return false, "Aguarde alguns segundos para renascer." end
 		local name = type(displayName) == "string" and string.sub(displayName, 1, 24) or "Jogador"
+		if ctx.mode == "extreme" then
+			local n, why = ctx.Nations.takeover(userId, name, a)
+			if not n then return false, why end
+			return true, "Você agora governa " .. n.name .. "."
+		end
 		local n, why = ctx.Nations.create("player", name, a, { userId = userId })
 		if not n then return false, why end
 		return true, "Nação fundada! Capital em " .. ((Map.countries[Map.country[a]] or {}).name or "terra livre") .. "."
@@ -1986,7 +2135,7 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 		if not isInt(a) or not Map:valid(a) then return false, "Alvo inválido." end
 		local kind = action == A.Nuke and "atomic" or action == A.Airstrike and "airstrike" or b
 		if type(kind) ~= "string" or not Config.Weapons[kind] then return false, "Arma inválida." end
-		return ctx.Strategic.launch(nid, a, kind)
+		return ctx.Strategic.launch(nid, a, kind, c)
 	elseif action == A.Ally or action == A.Decline or action == A.BreakAlliance or action == A.War then
 		if not isInt(a) or not ctx.Nations.get(a) or a == nid then return false, "Nação inválida." end
 		if action == A.Ally then return ctx.Diplomacy.requestAlliance(nid, a) end
@@ -2216,6 +2365,11 @@ function EconomyService.tick(dt)
 				n.troops = math.min(maxTroops, n.troops + rate * dt)
 			end
 			n.gold = n.gold + n.goldRate * dt
+			if ctx.mode == "extreme" then
+				local O = ctx.Config.Oil
+				n.oilRate = O.Base + n.land * O.PerCell + ctx.Buildings.totals(n.id).oil
+				n.oil = (n.oil or 0) + n.oilRate * dt
+			end
 		end
 	end
 end
@@ -2516,15 +2670,18 @@ function ExpansionService.publicView()
 end
 
 return ExpansionService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000014"><Properties><string name="Name">MatchService</string><ProtectedString name="Source">-- Mundial War · round life cycle: waiting → spawn phase → playing → victory → next round.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000014"><Properties><string name="Name">MatchService</string><ProtectedString name="Source">-- Mundial War · round life cycle:
+-- waiting → vote (choose the game mode) → spawn → playing → ended → vote …
 local MatchService = {}
 
 local ctx, Config
 local phase, phaseEnds, round, winner = "waiting", 0, 0, nil
+local votes = {}          -- userId -&gt; mode
 
 function MatchService.init(context)
 	ctx = context
 	Config = ctx.Config
+	ctx.mode = ctx.mode or Config.ModeOrder[1]
 end
 
 function MatchService.phase()
@@ -2539,6 +2696,10 @@ function MatchService.winner()
 	return winner
 end
 
+function MatchService.mode()
+	return ctx.mode
+end
+
 function MatchService.isPlaying()
 	return phase == "playing"
 end
@@ -2551,11 +2712,21 @@ function MatchService.timeLeft()
 	return math.max(0, phaseEnds - ctx.now())
 end
 
+local function tally()
+	local counts = {}
+	for _, m in ipairs(Config.ModeOrder) do counts[m] = 0 end
+	for _, m in pairs(votes) do counts[m] = (counts[m] or 0) + 1 end
+	return counts
+end
+
+function MatchService.publicView()
+	return { phase = phase, round = round, left = MatchService.timeLeft(), winner = winner, mode = ctx.mode, votes = tally() }
+end
+
 local function announce()
-	ctx.emit(nil, {
-		k = ctx.Protocol.Events.Match, phase = phase, round = round,
-		left = MatchService.timeLeft(), winner = winner,
-	})
+	local view = MatchService.publicView()
+	view.k = ctx.Protocol.Events.Match
+	ctx.emit(nil, view)
 end
 
 local function resetWorld()
@@ -2570,27 +2741,74 @@ local function resetWorld()
 	ctx.Bots.reset()
 end
 
+-- Places the AI for the chosen mode and opens the spawn phase.
+local function startSpawn()
+	phase = "spawn"
+	phaseEnds = ctx.now() + Config.Match.SpawnPhaseSeconds
+	if ctx.mode == "extreme" then
+		ctx.Bots.spawnCountries()
+	else
+		ctx.Bots.spawnAll()
+	end
+	ctx.fullResync = true
+	announce()
+end
+
 function MatchService.beginRound()
 	resetWorld()
 	round = round + 1
 	winner = nil
-	phase = "spawn"
-	phaseEnds = ctx.now() + Config.Match.SpawnPhaseSeconds
-	ctx.Bots.spawnAll()
+	votes = {}
+	if (Config.Match.VoteSeconds or 0) &lt;= 0 then
+		startSpawn()
+		return
+	end
+	phase = "vote"
+	phaseEnds = ctx.now() + Config.Match.VoteSeconds
 	ctx.fullResync = true
 	announce()
+end
+
+function MatchService.vote(userId, mode)
+	if phase ~= "vote" then return false, "A votação já terminou." end
+	if not Config.Modes[mode] then return false, "Modo inválido." end
+	votes[userId] = mode
+	announce()
+	return true, "Voto registrado: " .. Config.Modes[mode].name .. "."
+end
+
+local function closeVote()
+	local counts = tally()
+	local best, bestCount = Config.ModeOrder[1], -1
+	for _, m in ipairs(Config.ModeOrder) do
+		if counts[m] &gt; bestCount then best, bestCount = m, counts[m] end
+	end
+	ctx.mode = best
+	startSpawn()
+end
+
+-- Tests and tools: choose the mode directly.
+function MatchService.setMode(mode)
+	assert(Config.Modes[mode], "unknown mode " .. tostring(mode))
+	ctx.mode = mode
+	if phase == "vote" then
+		votes = {}
+		closeVote()
+	end
 end
 
 function MatchService.toWaiting()
 	resetWorld()
 	phase = "waiting"
 	winner = nil
+	votes = {}
 	ctx.fullResync = true
 	announce()
 end
 
--- Skips the rest of the spawn phase (used by tests and when every player already spawned).
+-- Skips the rest of the vote/spawn phases (tests, and the preview's "start now" button).
 function MatchService.startPlaying()
+	if phase == "vote" then closeVote() end
 	if phase == "spawn" then
 		phase = "playing"
 		phaseEnds = 0
@@ -2608,7 +2826,11 @@ function MatchService.tick(humanCount)
 		MatchService.toWaiting()
 		return
 	end
-	if phase == "spawn" then
+	if phase == "vote" then
+		local voted = 0
+		for _ in pairs(votes) do voted = voted + 1 end
+		if now &gt;= phaseEnds or (humanCount &gt; 0 and voted &gt;= humanCount) then closeVote() end
+	elseif phase == "spawn" then
 		if now &gt;= phaseEnds then MatchService.startPlaying() end
 	elseif phase == "playing" then
 		ctx.Nations.checkEliminations()
@@ -2626,10 +2848,6 @@ function MatchService.tick(humanCount)
 	elseif phase == "ended" then
 		if now &gt;= phaseEnds then MatchService.beginRound() end
 	end
-end
-
-function MatchService.publicView()
-	return { phase = phase, round = round, left = MatchService.timeLeft(), winner = winner }
 end
 
 return MatchService
@@ -2719,30 +2937,70 @@ function NationService.canRespawn(userId)
 end
 
 -- Creates a nation with its capital and a small starting disc of neutral land.
+-- Creates a nation with its capital and starting land: a small disc of neutral land, or
+-- (Conquista Extrema) a whole country passed as info.cells with its own troops/gold/oil.
 function NationService.create(kind, name, cell, info)
 	local Config = ctx.Config
-	local ok, why = NationService.canSpawnAt(cell)
-	if not ok then return nil, why end
+	info = info or {}
+	if not info.cells then
+		local ok, why = NationService.canSpawnAt(cell)
+		if not ok then return nil, why end
+	end
 	local id = nextId
 	nextId = nextId + 1
-	local troops = kind == "player" and Config.Spawn.PlayerStartTroops
-		or kind == "bot" and Config.Spawn.BotStartTroops or Config.Spawn.TribeStartTroops
+	local troops = info.troops or (kind == "player" and Config.Spawn.PlayerStartTroops
+		or kind == "bot" and Config.Spawn.BotStartTroops or Config.Spawn.TribeStartTroops)
 	local n = {
-		id = id, kind = kind, name = name, userId = info and info.userId or nil,
-		country = info and info.country or ctx.Map.country[cell],
-		troops = troops, gold = Config.Gold.StartGold, land = 0, capital = cell,
+		id = id, kind = kind, name = name, userId = info.userId,
+		country = info.country or ctx.Map.country[cell],
+		troops = troops, gold = info.gold or Config.Gold.StartGold, oil = info.oil or 0, land = 0, capital = cell,
 		labelCell = cell, labelSize = 1, alive = true, color = pickColor(cell),
 		built = {}, spawnedAt = ctx.now(), maxTroops = Config.Troops.BaseCapacity,
-		troopRate = 0, goldRate = 0, kills = 0,
+		troopRate = 0, goldRate = 0, oilRate = 0, kills = 0,
 	}
 	nations[id] = n
 	if n.userId then byUser[n.userId] = id end
 	ctx.Territory.register(id)
-	ctx.Map:disc(cell, Config.Spawn.StartRadius, function(i)
-		if ctx.Territory.ownerOf(i) == 0 then
-			ctx.Territory.setOwner(i, id)
+	if info.cells then
+		for _, i in ipairs(info.cells) do
+			if ctx.Territory.ownerOf(i) == 0 then ctx.Territory.setOwner(i, id) end
 		end
-	end)
+	else
+		ctx.Map:disc(cell, Config.Spawn.StartRadius, function(i)
+			if ctx.Territory.ownerOf(i) == 0 then
+				ctx.Territory.setOwner(i, id)
+			end
+		end)
+	end
+	ctx.emit(nil, { k = ctx.Protocol.Events.Nations, add = NationService.publicInfo(n) })
+	return n
+end
+
+-- Conquista Extrema: when a player leaves, the AI takes the country back instead of erasing it.
+function NationService.returnToAI(id)
+	local n = nations[id]
+	if not n or not n.alive or not n.userId then return end
+	byUser[n.userId] = nil
+	n.userId = nil
+	n.kind = "bot"
+	n.name = string.gsub(n.name, " %(.*%)$", "")
+	ctx.Bots.adopt(id)
+	ctx.emit(nil, { k = ctx.Protocol.Events.Nations, add = NationService.publicInfo(n) })
+end
+
+-- Conquista Extrema: a player takes command of the AI country that owns `cell`.
+function NationService.takeover(userId, displayName, cell)
+	local Map = ctx.Map
+	if not Map:valid(cell) or not Map.land[cell] then return nil, "Clique num país." end
+	local id = ctx.Territory.ownerOf(cell)
+	local n = nations[id]
+	if not n or not n.alive then return nil, "Esse lugar não pertence a nenhum país. Escolha um país colorido." end
+	if n.kind == "player" then return nil, n.name .. " já é governado por outro jogador." end
+	ctx.Bots.release(id)
+	n.kind = "player"
+	n.userId = userId
+	n.name = n.name .. " (" .. displayName .. ")"
+	byUser[userId] = id
 	ctx.emit(nil, { k = ctx.Protocol.Events.Nations, add = NationService.publicInfo(n) })
 	return n
 end
@@ -2794,6 +3052,9 @@ local NavalService = {}
 local ctx, Config, Map, Territory
 local fleets = {}        -- list of { id, nation, troops, path, progress, target }
 local boats = {}         -- list of { id, nation, port, level, x, y, hp, center, path, step, waypoint }
+local cargos = {}        -- list of { id, nation, port, path, progress, value }
+local portTimers = {}    -- port cell -&gt; next time it sends a cargo ship
+local cargoClock = 0
 local waterBody = nil    -- cell -&gt; connected water body id
 local nextId = 1
 local visit, prev, vstamp = {}, {}, 0
@@ -2829,7 +3090,11 @@ function NavalService.init(context)
 end
 
 function NavalService.reset()
-	fleets, boats, nextId = {}, {}, 1
+	fleets, boats, cargos, portTimers, nextId, cargoClock = {}, {}, {}, {}, 1, 0
+end
+
+function NavalService.cargos()
+	return cargos
 end
 
 function NavalService.fleets()
@@ -2971,6 +3236,26 @@ function NavalService.boatsAt(portCell)
 end
 
 -- Defence boat: bought at one of your ports; patrols around that port until you send it elsewhere.
+-- Air bridge: troops fly in a straight line from an air base, ignoring water.
+function NavalService.launchAir(nid, fromCell, targetCell, troops)
+	local ax, ay = Map:xy(fromCell)
+	local bx, by = Map:xy(targetCell)
+	local steps = math.max(1, math.floor(math.max(math.abs(bx - ax), math.abs(by - ay))))
+	local path = {}
+	for k = 0, steps do
+		local t = k / steps
+		path[#path + 1] = Map:index(math.floor(ax + (bx - ax) * t + 0.5), math.floor(ay + (by - ay) * t + 0.5))
+	end
+	local fleet = { id = nextId, nation = nid, troops = troops, path = path, progress = 1, target = targetCell,
+		air = true, speed = Config.Naval.AirliftSpeed }
+	nextId = nextId + 1
+	fleets[#fleets + 1] = fleet
+	local owner = Territory.ownerOf(targetCell)
+	if owner &gt; 0 then ctx.Diplomacy.ensureWar(nid, owner) end
+	ctx.emit(nil, { k = ctx.Protocol.Events.Orders, fleet = { fleet.id, nid, troops, path, fleet.speed, targetCell, true } })
+	return fleet
+end
+
 function NavalService.buyBoat(nid, portCell)
 	local N = Config.Naval
 	local n = ctx.Nations.get(nid)
@@ -3023,6 +3308,11 @@ function NavalService.removeNation(nid)
 		if boats[i].nation ~= nid then boats[k] = boats[i] k = k + 1 end
 	end
 	for i = k, #boats do boats[i] = nil end
+	k = 1
+	for i = 1, #cargos do
+		if cargos[i].nation ~= nid then cargos[k] = cargos[i] k = k + 1 end
+	end
+	for i = k, #cargos do cargos[i] = nil end
 end
 
 local function boatRange(b) return Config.Naval.BoatRange + (b.level - 1) end
@@ -3076,7 +3366,7 @@ local function boatCombat(dt)
 		end
 		if target then target.hp = target.hp - boatDamage(b) * dt end
 		for _, f in ipairs(fleets) do
-			if f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
+			if not f.air and f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
 				local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
 				if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r2 then
 					f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
@@ -3098,6 +3388,37 @@ local function boatCombat(dt)
 			end)
 		end
 	end
+	-- coastal anti-naval batteries (Conquista Extrema)
+	if ctx.mode == "extreme" then
+		for _, b in ipairs(boats) do
+			local here = boatCell(b)
+			if here then
+				local dmg = nil
+				ctx.Buildings.near(here, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
+					if p.kind == "antinaval" and p.active and p.owner ~= b.nation and ctx.Diplomacy.relation(p.owner, b.nation) == "war" then
+						local r = ctx.Buildings.stat(p, "radius")
+						local px, py = Map:xy(p.cell)
+						if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r * r then
+							dmg = math.max(dmg or 0, ctx.Buildings.stat(p, "damage"))
+						end
+					end
+				end)
+				if dmg then b.hp = b.hp - dmg * dt end
+			end
+		end
+		for _, f in ipairs(fleets) do
+			if not f.air then
+				local pos = f.path[math.min(#f.path, math.floor(f.progress))]
+				ctx.Buildings.near(pos, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
+					if p.kind == "antinaval" and p.active and p.owner ~= f.nation and ctx.Diplomacy.relation(p.owner, f.nation) == "war"
+						and Map:distance(p.cell, pos) &lt;= ctx.Buildings.stat(p, "radius") then
+						f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
+						return true
+					end
+				end)
+			end
+		end
+	end
 	local k = 1
 	for i = 1, #boats do
 		local b = boats[i]
@@ -3109,6 +3430,117 @@ local function boatCombat(dt)
 		end
 	end
 	for i = k, #boats do boats[i] = nil end
+end
+
+-- Trade run for a cargo ship: out to a water cell about CargoTripCells away and back.
+local function tradeRoute(portCell)
+	local start = waterNeighbor(portCell)
+	if not start then return nil end
+	local N = Config.Naval
+	vstamp = vstamp + 1
+	local queue, head = { start }, 1
+	visit[start] = vstamp
+	prev[start] = 0
+	local far, farD = start, 0
+	local sx, sy = Map:xy(start)
+	local scratch = {}
+	local limit = math.floor(math.pi * N.CargoTripCells * N.CargoTripCells)
+	while head &lt;= #queue and #queue &lt; limit do
+		local i = queue[head]
+		head = head + 1
+		local x, y = Map:xy(i)
+		local d = (x - sx) ^ 2 + (y - sy) ^ 2
+		if d &gt; farD and ctx.random() &lt; 0.6 then far, farD = i, d end
+		local m = Map:neighbors(i, scratch)
+		for k = 1, m do
+			local j = scratch[k]
+			if not Map.land[j] and visit[j] ~= vstamp then
+				visit[j] = vstamp
+				prev[j] = i
+				queue[#queue + 1] = j
+			end
+		end
+	end
+	if far == start then return nil end
+	local back = {}
+	local i = far
+	while i ~= 0 do back[#back + 1] = i i = prev[i] end
+	local path = {}
+	for k = #back, 1, -1 do path[#path + 1] = back[k] end      -- port -&gt; far
+	for k = 2, #back do path[#path + 1] = back[k] end          -- far -&gt; port
+	return path
+end
+
+local function cargoTick(dt)
+	local N = Config.Naval
+	cargoClock = cargoClock + dt
+	if cargoClock &gt;= 1 then
+		cargoClock = 0
+		local now = ctx.now()
+		local atSea = {}
+		for _, c in ipairs(cargos) do atSea[c.port] = (atSea[c.port] or 0) + 1 end
+		for cell, b in pairs(ctx.Buildings.all()) do
+			if b.kind == "port" and b.active and b.owner &gt; 0 then
+				local nextAt = portTimers[cell]
+				if not nextAt then
+					portTimers[cell] = now + N.CargoInterval * (0.3 + ctx.random() * 0.7)
+				elseif now &gt;= nextAt and (atSea[cell] or 0) &lt; b.level * N.CargoPerPortLevel then
+					portTimers[cell] = now + N.CargoInterval
+					local path = tradeRoute(cell)
+					if path then
+						cargos[#cargos + 1] = { id = nextId, nation = b.owner, port = cell, path = path, progress = 1,
+							value = N.CargoValue + N.CargoValuePerLevel * (b.level - 1) }
+						nextId = nextId + 1
+					end
+				end
+			end
+		end
+	end
+	local k = 1
+	for i = 1, #cargos do
+		local c = cargos[i]
+		local keep = ctx.Nations.alive(c.nation)
+		if keep then
+			c.progress = c.progress + N.CargoSpeed * dt
+			local pos = c.path[math.min(#c.path, math.floor(c.progress))]
+			local px, py = Map:xy(pos)
+			-- an enemy defence boat in reach captures the cargo
+			for _, b in ipairs(boats) do
+				if b.nation ~= c.nation and ctx.Diplomacy.relation(b.nation, c.nation) == "war" then
+					local r = boatRange(b)
+					if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r * r then
+						local captor = ctx.Nations.get(b.nation)
+						local prize = math.floor(c.value * N.CargoCaptureFactor)
+						if captor then captor.gold = captor.gold + prize end
+						ctx.notify(b.nation, "💰 Navio de carga capturado: +" .. prize .. " de ouro.", "good")
+						ctx.notify(c.nation, "Um navio de carga seu foi capturado.", "bad")
+						keep = false
+						break
+					end
+				end
+			end
+			if keep and c.progress &gt;= #c.path then
+				local n = ctx.Nations.get(c.nation)
+				local port = ctx.Buildings.at(c.port)
+				if n and port and port.owner == c.nation then n.gold = n.gold + c.value end
+				keep = false
+			end
+		end
+		if keep then
+			cargos[k] = c
+			k = k + 1
+		end
+	end
+	for i = k, #cargos do cargos[i] = nil end
+end
+
+-- Cargo rows for clients: { id, nation, cell }
+function NavalService.cargoView()
+	local out = {}
+	for _, c in ipairs(cargos) do
+		out[#out + 1] = { c.id, c.nation, c.path[math.min(#c.path, math.floor(c.progress))] }
+	end
+	return out
 end
 
 local function land(f)
@@ -3126,11 +3558,15 @@ local function land(f)
 	end
 	local cost, loss = ctx.Combat.cellCost(f.nation, f.target, f.troops, nil)
 	cost = cost * C.LandingCostFactor
+	if owner &gt; 0 and not f.air then
+		local battery = ctx.Buildings.covered(f.target, "antinaval", owner, "landing")
+		if battery then cost = cost * battery end
+	end
 	if f.troops &gt;= cost then
 		if owner &gt; 0 then
 			local d = ctx.Nations.get(owner)
 			d.troops = math.max(0, d.troops - loss)
-			ctx.notify(owner, n.name .. " desembarcou no seu litoral!", "war")
+			ctx.notify(owner, n.name .. (f.air and " lançou paraquedistas no seu território!" or " desembarcou no seu litoral!"), "war")
 		end
 		Territory.setOwner(f.target, f.nation)
 		local remaining = math.floor(f.troops - cost)
@@ -3158,11 +3594,15 @@ function NavalService.tick(dt)
 		local n = ctx.Nations.get(f.nation)
 		local keep = n ~= nil and n.alive
 		if keep then
-			f.progress = f.progress + N.Speed * dt
+			f.progress = f.progress + (f.speed or N.Speed) * dt
 			if f.troops &lt; 1 then
 				ctx.notify(f.nation, "Sua frota foi afundada.", "bad")
 				keep = false
 			elseif f.progress &gt;= #f.path then
+				if f.air and ctx.Strategic.intercepts(f.nation, f.target, true) then
+					f.troops = f.troops * (1 - N.AirliftInterceptLoss)
+					ctx.notify(f.nation, "A antiaérea inimiga atingiu sua ponte aérea.", "bad")
+				end
 				land(f)
 				keep = false
 			end
@@ -3179,6 +3619,7 @@ function NavalService.tick(dt)
 		if ctx.Nations.alive(b.nation) then moveBoat(b, dt) end
 	end
 	boatCombat(dt)
+	cargoTick(dt)
 end
 
 -- Boat rows for clients: { id, nation, x, y, health, patrolCell, level }
@@ -3201,7 +3642,7 @@ end
 function NavalService.snapshot()
 	local fl, ws = {}, {}
 	for _, f in ipairs(fleets) do
-		fl[#fl + 1] = { f.id, f.nation, math.floor(f.troops), f.path, Config.Naval.Speed, f.target, f.progress }
+		fl[#fl + 1] = { f.id, f.nation, math.floor(f.troops), f.path, f.speed or Config.Naval.Speed, f.target, f.progress, f.air == true }
 	end
 	return fl, NavalService.boatView()
 end
@@ -3260,14 +3701,14 @@ function NetworkService.start(theWorld)
 	commandRemote = remote(Protocol.CommandRemote)
 	eventRemote = remote(Protocol.EventRemote)
 
-	commandRemote.OnServerEvent:Connect(function(player, action, a, b)
+	commandRemote.OnServerEvent:Connect(function(player, action, a, b, c)
 		if action == Protocol.Actions.Sync then
 			if ready[player] and ready[player] &gt; os.clock() - 2 then return end -- sync spam guard
 			ready[player] = os.clock()
 			sendInit(player)
 			return
 		end
-		local ok, message = ctx.Commands.handle(player.UserId, player.DisplayName, action, a, b, os.clock())
+		local ok, message = ctx.Commands.handle(player.UserId, player.DisplayName, action, a, b, os.clock(), c)
 		if message then
 			eventRemote:FireClient(player, { k = Protocol.Events.Notice, text = message, kind = ok and "good" or "bad" })
 		end
@@ -3278,7 +3719,11 @@ function NetworkService.start(theWorld)
 		ctx.Commands.forget(player.UserId)
 		local n = ctx.Nations.forUser(player.UserId)
 		if n and n.alive then
-			ctx.Nations.eliminate(n.id, "left")
+			if ctx.mode == "extreme" then
+				ctx.Nations.returnToAI(n.id)
+			else
+				ctx.Nations.eliminate(n.id, "left")
+			end
 		end
 	end)
 end
@@ -3329,12 +3774,15 @@ function NetworkService.flush(dt)
 end
 
 return NetworkService
-</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000018"><Properties><string name="Name">StrategicService</string><ProtectedString name="Source">-- Mundial War · strategic weapons (air strike, cluster, EMP, atomic, hydrogen), fired from
--- air bases or silos and possibly intercepted by air defence.
+</ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000018"><Properties><string name="Name">StrategicService</string><ProtectedString name="Source">-- Mundial War · strategic weapons fired from air bases or silos: air strike, cluster, fire
+-- bomb, EMP, atomic, hydrogen, End of an Era (multiple warheads) and the air bridge.
+-- Air defence stops missiles and aircraft; the flak building stops aircraft only; nothing
+-- stops the End of an Era.
 local StrategicService = {}
 
 local ctx, Config, Map, Territory
 local missiles = {}
+local fires = {}         -- { id, nation, center, radius, max, grow, endsAt, troopBurn, pulse }
 local nextId = 1
 
 function StrategicService.init(context)
@@ -3345,7 +3793,11 @@ function StrategicService.init(context)
 end
 
 function StrategicService.reset()
-	missiles, nextId = {}, 1
+	missiles, fires, nextId = {}, {}, 1
+end
+
+function StrategicService.fires()
+	return fires
 end
 
 function StrategicService.missiles()
@@ -3375,10 +3827,36 @@ local function pickLauncher(nid, weapon, target)
 	return best, bestD, why
 end
 
-function StrategicService.launch(nid, cell, kind)
+local function addMissile(nid, kind, from, to, speed)
+	local m = { id = nextId, kind = kind, nation = nid, from = from, to = to, progress = 0,
+		distance = math.max(1, Map:distance(from, to)), speed = speed }
+	nextId = nextId + 1
+	missiles[#missiles + 1] = m
+	ctx.emit(nil, { k = ctx.Protocol.Events.Impact, launch = { m.id, kind, nid, m.from, m.to, m.speed } })
+	return m
+end
+
+-- End of an Era: besides the chosen target, the capitals of up to (warheads-1) other
+-- nations at war with the launcher, nearest first.
+local function extraTargets(nid, cell, count, skip)
+	local list = {}
+	for id, other in pairs(ctx.Nations.all()) do
+		if other.alive and id ~= nid and id ~= skip and ctx.Diplomacy.relation(nid, id) == "war"
+			and Territory.ownerOf(other.capital) == id then
+			list[#list + 1] = { cell = other.capital, d = Map:distance(other.capital, cell) }
+		end
+	end
+	table.sort(list, function(a, b) return a.d &lt; b.d end)
+	local out = {}
+	for k = 1, math.min(count, #list) do out[k] = list[k].cell end
+	return out
+end
+
+function StrategicService.launch(nid, cell, kind, percent)
 	local weapon = Config.Weapons[kind]
 	local n = ctx.Nations.get(nid)
 	if not weapon then return false, "Arma inválida." end
+	if weapon.mode and weapon.mode ~= ctx.mode then return false, weapon.name .. " só existe na Conquista Extrema." end
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
 	if not n or not n.alive then return false, "Você não tem nação." end
 	if not Map:valid(cell) then return false, "Alvo inválido." end
@@ -3386,23 +3864,41 @@ function StrategicService.launch(nid, cell, kind)
 	if owner == nid then return false, "Esse alvo é seu." end
 	if owner &gt; 0 and ctx.Diplomacy.allied(nid, owner) then return false, "Não é possível atacar um aliado." end
 	if kind == "airstrike" and owner &lt;= 0 then return false, "Ataque aéreo precisa de um alvo inimigo." end
+	if weapon.troops and owner == -1 then return false, "As tropas precisam pousar em terra." end
 	if ctx.Buildings.count(nid, weapon.launcher) &lt;= 0 then
 		return false, "Requer " .. Config.Buildings[weapon.launcher].name .. "."
 	end
 	local launcher, distance, why = pickLauncher(nid, weapon, cell)
 	if not launcher then return false, why end
+	local oil = ctx.mode == "extreme" and weapon.oil or 0
 	if n.gold &lt; weapon.gold then return false, weapon.name .. " custa " .. weapon.gold .. " de ouro." end
+	if oil &gt; 0 and (n.oil or 0) &lt; oil then return false, weapon.name .. " precisa de " .. oil .. " de petróleo." end
+	local troops = 0
+	if weapon.troops then
+		if type(percent) ~= "number" or percent ~= percent or percent &lt; 0.01 or percent &gt; 1 then return false, "Percentual inválido." end
+		local N = Config.Naval
+		local cap = N.AirliftMaxTroops + N.AirliftMaxPerLevel * (launcher.level - 1)
+		troops = math.min(cap, math.floor(n.troops * percent))
+		if troops &lt; N.MinTroops then return false, "A ponte aérea precisa de pelo menos " .. N.MinTroops .. " tropas." end
+	end
 	n.gold = n.gold - weapon.gold
+	if oil &gt; 0 then n.oil = n.oil - oil end
 	local factor = ctx.Buildings.stat(launcher, "cooldownFactor") or 1
 	launcher.readyAt = ctx.now() + weapon.cooldown * factor
+	if weapon.troops then
+		n.troops = n.troops - troops
+		ctx.Naval.launchAir(nid, launcher.cell, cell, troops)
+		return true, "Ponte aérea: " .. troops .. " tropas a caminho."
+	end
 	if owner &gt; 0 then ctx.Diplomacy.ensureWar(nid, owner) end
-	local m = {
-		id = nextId, kind = kind, nation = nid, from = launcher.cell, to = cell,
-		progress = 0, distance = math.max(1, distance), speed = weapon.speed,
-	}
-	nextId = nextId + 1
-	missiles[#missiles + 1] = m
-	ctx.emit(nil, { k = ctx.Protocol.Events.Impact, launch = { m.id, kind, nid, m.from, m.to, m.speed } })
+	addMissile(nid, kind, launcher.cell, cell, weapon.speed)
+	if weapon.warheads then
+		for _, extra in ipairs(extraTargets(nid, cell, weapon.warheads - 1, owner)) do
+			addMissile(nid, kind, launcher.cell, extra, weapon.speed)
+			local victim = Territory.ownerOf(extra)
+			if victim &gt; 0 then ctx.notify(victim, weapon.icon .. " " .. weapon.name .. " de " .. n.name .. " a caminho!", "war") end
+		end
+	end
 	if owner &gt; 0 then
 		ctx.notify(owner, weapon.icon .. " " .. weapon.name .. " de " .. n.name .. " a caminho!", "war")
 	end
@@ -3413,17 +3909,20 @@ end
 function StrategicService.launchNuke(nid, cell) return StrategicService.launch(nid, cell, "atomic") end
 function StrategicService.launchAirstrike(nid, cell) return StrategicService.launch(nid, cell, "airstrike") end
 
-local function intercepted(m)
-	local owner = Territory.ownerOf(m.to)
+-- Anti-air of the target's owner (and allies) may shoot it down: air defence stops missiles
+-- and aircraft, flak stops aircraft only, the End of an Era cannot be stopped.
+function StrategicService.intercepts(attacker, targetCell, aircraft)
+	local owner = Territory.ownerOf(targetCell)
 	if owner &lt;= 0 then return false end
 	local defenders = ctx.Diplomacy.allies(owner)
 	defenders[#defenders + 1] = owner
 	local isDefender = {}
 	for _, d in ipairs(defenders) do isDefender[d] = true end
 	local hit = false
-	local tx, ty = Map:xy(m.to)
-	ctx.Buildings.near(m.to, ctx.Stats.maxStat(Config, "airdefense", "radius"), function(b)
-		if b.kind == "airdefense" and b.active and isDefender[b.owner] and b.owner ~= m.nation then
+	local tx, ty = Map:xy(targetCell)
+	local reach = math.max(ctx.Stats.maxStat(Config, "airdefense", "radius"), ctx.Stats.maxStat(Config, "flak", "radius"))
+	ctx.Buildings.near(targetCell, reach, function(b)
+		if (b.kind == "airdefense" or (b.kind == "flak" and aircraft)) and b.active and isDefender[b.owner] and b.owner ~= attacker then
 			local r = ctx.Buildings.stat(b, "radius")
 			local bx, by = Map:xy(b.cell)
 			if (bx - tx) ^ 2 + (by - ty) ^ 2 &lt;= r * r and ctx.random() &lt; ctx.Buildings.stat(b, "intercept") then
@@ -3433,6 +3932,18 @@ local function intercepted(m)
 		end
 	end)
 	return hit
+end
+
+local function intercepted(m)
+	local w = Config.Weapons[m.kind]
+	if w.unstoppable then return false end
+	return StrategicService.intercepts(m.nation, m.to, w.aircraft == true)
+end
+
+local function startFire(nid, cell, spec)
+	fires[#fires + 1] = { id = nextId, nation = nid, center = cell, radius = 1, max = spec.radius, grow = spec.grow,
+		endsAt = ctx.now() + spec.seconds, troopBurn = spec.troopBurn, pulse = 0 }
+	nextId = nextId + 1
 end
 
 local function impact(m)
@@ -3450,6 +3961,15 @@ local function impact(m)
 			ctx.Buildings.disable(cell, ctx.now() + w.disable)
 		end
 	end
+	if w.destroys and w.disable then
+		-- End of an Era: the EMP ring reaches beyond the blast
+		ctx.Buildings.near(m.to, radius * 1.6, function(b)
+			if b.owner ~= m.nation and not ctx.Diplomacy.allied(m.nation, b.owner) then
+				ctx.Buildings.disable(b.cell, ctx.now() + w.disable)
+			end
+		end)
+	end
+	if w.fire then startFire(m.nation, m.to, w.fire) end
 	-- troops
 	if w.troopKill then
 		local hits, fallout = {}, {}
@@ -3483,6 +4003,10 @@ local function impact(m)
 		local o = Territory.ownerOf(m.to)
 		if o &gt; 0 then ctx.notify(o, "⚡ EMP: construções desligadas por " .. w.disable .. " s.", "war") end
 	end
+	if w.fire then
+		local o = Territory.ownerOf(m.to)
+		if o &gt; 0 then ctx.notify(o, "🔥 Incêndio no seu território!", "war") end
+	end
 end
 
 function StrategicService.tick(dt)
@@ -3505,6 +4029,51 @@ function StrategicService.tick(dt)
 		end
 	end
 	for i = k, #missiles do missiles[i] = nil end
+	-- fires spread slowly, burn troops every second and destroy structures they reach
+	local now = ctx.now()
+	k = 1
+	for i = 1, #fires do
+		local f = fires[i]
+		f.radius = math.min(f.max, f.radius + f.grow * dt)
+		f.pulse = f.pulse + dt
+		if f.pulse &gt;= 1 then
+			f.pulse = f.pulse - 1
+			local hits = {}
+			Map:disc(f.center, f.radius, function(c)
+				local o = Territory.ownerOf(c)
+				if o &gt; 0 and o ~= f.nation and not ctx.Diplomacy.allied(f.nation, o) then hits[o] = (hits[o] or 0) + 1 end
+			end)
+			for o, count in pairs(hits) do
+				local victim = ctx.Nations.get(o)
+				if victim then
+					local density = victim.troops / math.max(1, victim.land)
+					victim.troops = math.max(0, victim.troops - density * count * f.troopBurn)
+				end
+			end
+			local burned = {}
+			ctx.Buildings.near(f.center, f.radius, function(b)
+				if b.owner ~= f.nation and not ctx.Diplomacy.allied(f.nation, b.owner) then burned[#burned + 1] = b.cell end
+			end)
+			for _, c in ipairs(burned) do ctx.Buildings.destroy(c) end
+			for _, o in ipairs(ctx.Expansion.activeOrders()) do
+				if o.front and o.nation ~= f.nation and Map:distance(o.front, f.center) &lt;= f.radius then
+					o.troops = o.troops * (1 - f.troopBurn * 0.5)
+				end
+			end
+		end
+		if now &lt; f.endsAt then
+			fires[k] = f
+			k = k + 1
+		end
+	end
+	for i = k, #fires do fires[i] = nil end
+end
+
+-- Fire rows for clients: { id, centerCell, radius }
+function StrategicService.fireView()
+	local out = {}
+	for _, f in ipairs(fires) do out[#out + 1] = { f.id, f.center, math.floor(f.radius * 10) / 10 } end
+	return out
 end
 
 function StrategicService.snapshot()
@@ -3883,6 +4452,7 @@ function World.new(deps)
 		random = deps.random or math.random,
 		outbox = {},
 		fullResync = false,
+		mode = deps.mode,
 	}
 	self.time = 0
 	ctx.now = function() return self.time end
@@ -4001,6 +4571,8 @@ function World:initPayload(userId)
 		relations = ctx.Diplomacy.snapshot(),
 		fleets = fleets, boats = boats,
 		missiles = ctx.Strategic.snapshot(),
+		fires = ctx.Strategic.fireView(),
+		cargos = ctx.Naval.cargoView(),
 		match = ctx.Match.publicView(),
 		you = you and you.alive and you.id or nil,
 		debug = ctx.Config.DEBUG_MODE,
@@ -4035,6 +4607,8 @@ function World:ordersPayload()
 		orders = ctx.Expansion.publicView(),
 		fleets = ctx.Naval.publicView(),
 		boats = ctx.Naval.boatView(),
+		cargos = ctx.Naval.cargoView(),
+		fires = ctx.Strategic.fireView(),
 	}
 	if ctx.Config.DEBUG_MODE then payload.bots = ctx.Bots.debugView() end
 	return payload
@@ -4059,6 +4633,7 @@ function World:privatePayload(userId)
 	return {
 		k = "me", id = n.id, troops = math.floor(n.troops), max = math.floor(n.maxTroops),
 		rate = n.troopRate, gold = math.floor(n.gold), goldRate = n.goldRate, land = n.land,
+		oil = math.floor(n.oil or 0), oilRate = n.oilRate or 0, mode = ctx.mode,
 		share = n.land / ctx.Map.landCount, costs = costs, cooldowns = cooldowns,
 		requests = ctx.Diplomacy.pendingFor(n.id),
 	}
@@ -4138,8 +4713,8 @@ local renderer = MapRenderer.new(state, world)
 local overlay = OverlayRenderer.new(state, camera, world)
 local debugOverlay = nil
 
-local function send(action, a, b)
-	commandRemote:FireServer(action, a, b)
+local function send(action, a, b, c)
+	commandRemote:FireServer(action, a, b, c)
 end
 
 -- Interaction state ------------------------------------------------------------------------
@@ -4149,6 +4724,7 @@ local patrolBoat = nil    -- boat id while choosing where it patrols
 local selectedCell = nil  -- own building whose reach is being shown
 local pending = nil       -- { cell, at, kind }
 local hud
+local myVote = nil
 
 local function clearAim()
 	pending = nil
@@ -4288,7 +4864,7 @@ local function handleClick(p, button)
 		local now = os.clock()
 		if pending and pending.kind == "weapon" and Map:distance(pending.cell, cell) &lt;= Config.View.ConfirmRadius
 			and now - pending.at &lt;= Config.View.ConfirmTimeout then
-			send(Actions.Weapon, pending.cell, buildKind)
+			send(Actions.Weapon, pending.cell, buildKind, state.percent)
 			setMode(nil)
 			return
 		end
@@ -4400,6 +4976,11 @@ hud = HUD.new(state, gui, {
 	onBuild = function(kind)
 		if buildKind == kind then setMode("build", nil) else setMode("build", kind) end
 	end,
+	onVote = function(mode)
+		myVote = mode
+		send(Actions.Vote, mode)
+		hud:refreshMenu(myVote)
+	end,
 	onWeapon = function(kind)
 		if buildKind == kind then setMode("weapon", nil) else setMode("weapon", kind) end
 	end,
@@ -4427,13 +5008,21 @@ task.spawn(function()
 			text = "🚢 Clique na água onde o barco deve patrulhar · Esc cancela"
 		elseif phase == "spawn" then
 			local left = math.ceil(state:timeLeft())
-			text = state.you and ("A guerra começa em " .. left .. "s") or ("Clique numa terra livre para fundar sua nação · " .. left .. "s")
+			if state.match.mode == "extreme" then
+				text = state.you and ("A guerra começa em " .. left .. "s") or ("🔥 Clique num país para governá-lo · " .. left .. "s")
+			else
+				text = state.you and ("A guerra começa em " .. left .. "s") or ("Clique numa terra livre para fundar sua nação · " .. left .. "s")
+			end
 		elseif phase == "playing" and not state.you then
-			text = "Clique numa terra livre para fundar uma nova nação"
+			text = state.match.mode == "extreme" and "🔥 Clique num país controlado pela IA para governá-lo"
+				or "Clique numa terra livre para fundar uma nova nação"
+		elseif phase == "vote" then
+			text = nil
 		elseif phase == "waiting" then
 			text = "Preparando o mundo…"
 		end
 		hud:setBanner(text)
+		hud:refreshMenu(myVote)
 		task.wait(0.25)
 	end
 end)
@@ -4454,6 +5043,7 @@ local function onMatch(match)
 	if lastRound and match.round ~= lastRound then
 		clearAim()
 		setMode(nil)
+		myVote = nil
 	end
 	lastPhase, lastRound = match.phase, match.round
 end
@@ -4490,7 +5080,7 @@ eventRemote.OnClientEvent:Connect(function(data)
 				function() send(Actions.Decline, from) end)
 		end
 	elseif k == Events.Match then
-		state.match = { phase = data.phase, round = data.round, left = data.left, winner = data.winner }
+		state.match = { phase = data.phase, round = data.round, left = data.left, winner = data.winner, mode = data.mode, votes = data.votes }
 		state.matchAt = os.clock()
 		onMatch(state.match)
 	elseif k == Events.Impact then
@@ -4645,6 +5235,8 @@ function ClientState.new(Map, Protocol, Config, Palette, Stats)
 	self.fleets = {}           -- id -&gt; { id, nation, troops, path, speed, target, progress, t0 }
 	self.boats = {}           -- list { id, nation, x, y, health, patrolCell, level }
 	self.missiles = {}         -- id -&gt; { id, kind, nation, from, to, speed, progress, t0 }
+	self.fires = {}            -- list { id, centerCell, radius }
+	self.cargos = {}           -- list { id, nation, cell }
 	self.match = { phase = "waiting", round = 0, left = 0 }
 	self.matchAt = 0
 	self.you = nil
@@ -4696,9 +5288,11 @@ function ClientState:applyInit(data)
 	self.fleets = {}
 	local now = os.clock()
 	for _, f in ipairs(data.fleets or {}) do
-		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = f[7], t0 = now }
+		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = f[7], air = f[8] == true, t0 = now }
 	end
 	self.boats = data.boats or {}
+	self.fires = data.fires or {}
+	self.cargos = data.cargos or {}
 	self.missiles = {}
 	for _, m in ipairs(data.missiles or {}) do
 		self.missiles[m[1]] = { id = m[1], kind = m[2], nation = m[3], from = m[4], to = m[5], speed = m[6], progress = m[7], t0 = now }
@@ -4765,7 +5359,7 @@ function ClientState:applyOrders(data)
 	local now = os.clock()
 	if data.fleet then
 		local f = data.fleet
-		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = 1, t0 = now }
+		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = 1, air = f[7] == true, t0 = now }
 	end
 	if data.fleetEnd then self.fleets[data.fleetEnd] = nil end
 	if data.orders then self.orders = data.orders end
@@ -4776,6 +5370,8 @@ function ClientState:applyOrders(data)
 		end
 	end
 	if data.boats then self.boats = data.boats end
+	if data.fires then self.fires = data.fires end
+	if data.cargos then self.cargos = data.cargos end
 	if data.bots then self.botStates = data.bots end
 	self:fire("orders")
 end
@@ -5089,6 +5685,30 @@ function HUD.new(state, gui, handlers)
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 	layout()
 
+	-- Mode menu: shown during the vote that opens every round -----------------------------------
+	self.menu = panel(gui, { Name = "ModeMenu", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(560, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 60 })
+	make("UIPadding", self.menu, { PaddingTop = UDim.new(0, 16), PaddingBottom = UDim.new(0, 16), PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16) })
+	make("UIListLayout", self.menu, { Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder })
+	make("TextLabel", self.menu, { LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Font = BOLD, TextSize = 28, TextColor3 = ACCENT, Text = "MUNDIAL WAR", ZIndex = 61 })
+	self.menuTimer = make("TextLabel", self.menu, { LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Font = FONT, TextSize = 13, TextColor3 = MUTED, Text = "Escolha o modo da próxima partida", ZIndex = 61 })
+	local cards = make("Frame", self.menu, { LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, ZIndex = 61 })
+	make("UIListLayout", cards, { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder })
+	self.modeCards = {}
+	for index, mode in ipairs(self.Config.ModeOrder) do
+		local def = self.Config.Modes[mode]
+		local card = make("Frame", cards, { LayoutOrder = index, Size = UDim2.new(0.5, -5, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Color3.fromRGB(28, 38, 52), BorderSizePixel = 0, ZIndex = 61 })
+		make("UICorner", card, { CornerRadius = UDim.new(0, 8) })
+		local stroke = make("UIStroke", card, { Thickness = 2, Color = ACCENT, Transparency = 1 })
+		make("UIPadding", card, { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) })
+		make("UIListLayout", card, { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+		make("TextLabel", card, { LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Font = BOLD, TextSize = 17, TextColor3 = TEXT, TextXAlignment = Enum.TextXAlignment.Left, Text = def.icon .. " " .. def.name, ZIndex = 62 })
+		make("TextLabel", card, { LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = MUTED, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = def.description, ZIndex = 62 })
+		local votes = make("TextLabel", card, { LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = ACCENT, TextXAlignment = Enum.TextXAlignment.Left, Text = "0 votos", ZIndex = 62 })
+		local vote = button(card, "Votar", { LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 30), ZIndex = 62 })
+		vote.Activated:Connect(function() self.h.onVote(mode) end)
+		self.modeCards[mode] = { stroke = stroke, votes = votes }
+	end
+
 	self:setPercent(state.percent)
 	return self
 end
@@ -5142,6 +5762,18 @@ function HUD:refreshMe()
 	end
 	self.troopsText.Text = string.format("👥 &lt;b&gt;%s&lt;/b&gt; &lt;font color=\"#96a0ac\"&gt;/ %s  +%s/s&lt;/font&gt;", F(me.troops), F(me.max), F(me.rate))
 	self.goldText.Text = string.format("💰 &lt;b&gt;%s&lt;/b&gt; &lt;font color=\"#96a0ac\"&gt;+%s/s · %.1f%% do mundo&lt;/font&gt;", F(me.gold), F(me.goldRate), me.share * 100)
+	if me.mode == "extreme" then
+		self.goldText.Text = string.format("💰 &lt;b&gt;%s&lt;/b&gt; &lt;font color=\"#96a0ac\"&gt;+%s/s&lt;/font&gt;  🛢 &lt;b&gt;%s&lt;/b&gt; &lt;font color=\"#96a0ac\"&gt;+%s/s&lt;/font&gt;", F(me.gold), F(me.goldRate), F(me.oil), F(me.oilRate))
+	end
+	-- show only what exists in the current mode
+	for kind, b in pairs(self.trayButtons) do
+		local m = self.Config.Buildings[kind].mode
+		b.Visible = m == nil or m == me.mode
+	end
+	for kind, b in pairs(self.weaponButtons) do
+		local m = self.Config.Weapons[kind].mode
+		b.Visible = m == nil or m == me.mode
+	end
 	self.avatarStroke.Color = rgb(state:nationColor(state.you))
 	local mine = 0
 	for _, o in ipairs(state.orders) do
@@ -5275,6 +5907,20 @@ function HUD:allianceRequest(fromId, seconds, onAccept, onDecline)
 	yes.Activated:Connect(function() card:Destroy() onAccept() end)
 	no.Activated:Connect(function() card:Destroy() onDecline() end)
 	task.delay(seconds or 30, function() if card.Parent then card:Destroy() end end)
+end
+
+
+function HUD:refreshMenu(myVote)
+	local match = self.state.match
+	local show = match.phase == "vote"
+	self.menu.Visible = show
+	if not show then return end
+	self.menuTimer.Text = "Escolha o modo da próxima partida · " .. math.ceil(self.state:timeLeft()) .. "s"
+	for mode, c in pairs(self.modeCards) do
+		local n = match.votes and match.votes[mode] or 0
+		c.votes.Text = n .. (n == 1 and " voto" or " votos")
+		c.stroke.Transparency = myVote == mode and 0 or 1
+	end
 end
 
 return HUD
@@ -5723,6 +6369,7 @@ function OverlayRenderer.new(state, camera, world)
 	self.layer = make("Frame", world, { Name = "Overlay", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 2 })
 	self.labels, self.capitals, self.icons, self.orderItems = {}, {}, {}, {}
 	self.fleetItems, self.missileItems, self.shipItems = {}, {}, {}
+	self.fireItems, self.cargoItems = {}, {}
 	self.thumbs = {}
 	self.aim = nil
 	self.needsLayout = true
@@ -6009,6 +6656,35 @@ function OverlayRenderer:updateOrders()
 		end
 	end
 	release(self.shipItems)
+
+	-- fires: a translucent blaze that grows with the server's radius
+	for _, f in ipairs(state.fires or {}) do
+		local id, center, radius = f[1], f[2], f[3]
+		local item = pool(self.fireItems, id, function()
+			local it = { glow = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(255, 120, 30), BackgroundTransparency = 0.45, ZIndex = 4 }) }
+			make("UICorner", it.glow, { CornerRadius = UDim.new(1, 0) })
+			make("UIStroke", it.glow, { Color = Color3.fromRGB(255, 70, 20), Thickness = 2 })
+			local core = make("Frame", it.glow, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.55, 0.55), BackgroundColor3 = Color3.fromRGB(255, 200, 60), BackgroundTransparency = 0.35, ZIndex = 4 })
+			make("UICorner", core, { CornerRadius = UDim.new(1, 0) })
+			return it
+		end)
+		item.glow.Position = self:pos(center)
+		item.glow.Size = UDim2.fromScale(radius * 2 / self.Map.W, radius * 2 / self.Map.H)
+	end
+	release(self.fireItems)
+
+	-- cargo ships carrying gold home
+	for _, c in ipairs(state.cargos or {}) do
+		local id, nation, cell = c[1], c[2], c[3]
+		local item = pool(self.cargoItems, id, function()
+			return { icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = "🚤", TextScaled = true, Font = FONT, ZIndex = 5 }) }
+		end)
+		local size = math.clamp(cam.scale * 1.3, 10, 18)
+		item.icon.Size = UDim2.fromOffset(size, size)
+		item.icon.Visible = lod &gt;= 1 or nation == state.you
+		TweenService:Create(item.icon, TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear), { Position = self:pos(cell) }):Play()
+	end
+	release(self.cargoItems)
 end
 
 -- Fleets and missiles move every frame between server updates.
@@ -6044,7 +6720,7 @@ function OverlayRenderer:animate()
 		local bx, by = self:center(b)
 		local t = progress - k
 		item.icon.Position = self:posXY(ax + (bx - ax) * t, ay + (by - ay) * t)
-		item.icon.Text = " ⛵ " .. self.Protocol.formatK(f.troops) .. " "
+		item.icon.Text = (f.air and " 🪂 " or " ⛵ ") .. self.Protocol.formatK(f.troops) .. " "
 		item.route.Visible = f.nation == state.you or self.camera:lod() &gt;= 1
 	end
 	release(self.fleetItems)

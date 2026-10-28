@@ -71,8 +71,8 @@ local renderer = MapRenderer.new(state, world)
 local overlay = OverlayRenderer.new(state, camera, world)
 local debugOverlay = nil
 
-local function send(action, a, b)
-	commandRemote:FireServer(action, a, b)
+local function send(action, a, b, c)
+	commandRemote:FireServer(action, a, b, c)
 end
 
 -- Interaction state ------------------------------------------------------------------------
@@ -82,6 +82,7 @@ local patrolBoat = nil    -- boat id while choosing where it patrols
 local selectedCell = nil  -- own building whose reach is being shown
 local pending = nil       -- { cell, at, kind }
 local hud
+local myVote = nil
 
 local function clearAim()
 	pending = nil
@@ -221,7 +222,7 @@ local function handleClick(p, button)
 		local now = os.clock()
 		if pending and pending.kind == "weapon" and Map:distance(pending.cell, cell) <= Config.View.ConfirmRadius
 			and now - pending.at <= Config.View.ConfirmTimeout then
-			send(Actions.Weapon, pending.cell, buildKind)
+			send(Actions.Weapon, pending.cell, buildKind, state.percent)
 			setMode(nil)
 			return
 		end
@@ -333,6 +334,11 @@ hud = HUD.new(state, gui, {
 	onBuild = function(kind)
 		if buildKind == kind then setMode("build", nil) else setMode("build", kind) end
 	end,
+	onVote = function(mode)
+		myVote = mode
+		send(Actions.Vote, mode)
+		hud:refreshMenu(myVote)
+	end,
 	onWeapon = function(kind)
 		if buildKind == kind then setMode("weapon", nil) else setMode("weapon", kind) end
 	end,
@@ -360,13 +366,21 @@ task.spawn(function()
 			text = "🚢 Clique na água onde o barco deve patrulhar · Esc cancela"
 		elseif phase == "spawn" then
 			local left = math.ceil(state:timeLeft())
-			text = state.you and ("A guerra começa em " .. left .. "s") or ("Clique numa terra livre para fundar sua nação · " .. left .. "s")
+			if state.match.mode == "extreme" then
+				text = state.you and ("A guerra começa em " .. left .. "s") or ("🔥 Clique num país para governá-lo · " .. left .. "s")
+			else
+				text = state.you and ("A guerra começa em " .. left .. "s") or ("Clique numa terra livre para fundar sua nação · " .. left .. "s")
+			end
 		elseif phase == "playing" and not state.you then
-			text = "Clique numa terra livre para fundar uma nova nação"
+			text = state.match.mode == "extreme" and "🔥 Clique num país controlado pela IA para governá-lo"
+				or "Clique numa terra livre para fundar uma nova nação"
+		elseif phase == "vote" then
+			text = nil
 		elseif phase == "waiting" then
 			text = "Preparando o mundo…"
 		end
 		hud:setBanner(text)
+		hud:refreshMenu(myVote)
 		task.wait(0.25)
 	end
 end)
@@ -387,6 +401,7 @@ local function onMatch(match)
 	if lastRound and match.round ~= lastRound then
 		clearAim()
 		setMode(nil)
+		myVote = nil
 	end
 	lastPhase, lastRound = match.phase, match.round
 end
@@ -423,7 +438,7 @@ eventRemote.OnClientEvent:Connect(function(data)
 				function() send(Actions.Decline, from) end)
 		end
 	elseif k == Events.Match then
-		state.match = { phase = data.phase, round = data.round, left = data.left, winner = data.winner }
+		state.match = { phase = data.phase, round = data.round, left = data.left, winner = data.winner, mode = data.mode, votes = data.votes }
 		state.matchAt = os.clock()
 		onMatch(state.match)
 	elseif k == Events.Impact then

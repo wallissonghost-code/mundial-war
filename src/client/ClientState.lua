@@ -14,6 +14,8 @@ function ClientState.new(Map, Protocol, Config, Palette, Stats)
 	self.fleets = {}           -- id -> { id, nation, troops, path, speed, target, progress, t0 }
 	self.boats = {}           -- list { id, nation, x, y, health, patrolCell, level }
 	self.missiles = {}         -- id -> { id, kind, nation, from, to, speed, progress, t0 }
+	self.fires = {}            -- list { id, centerCell, radius }
+	self.cargos = {}           -- list { id, nation, cell }
 	self.match = { phase = "waiting", round = 0, left = 0 }
 	self.matchAt = 0
 	self.you = nil
@@ -65,9 +67,11 @@ function ClientState:applyInit(data)
 	self.fleets = {}
 	local now = os.clock()
 	for _, f in ipairs(data.fleets or {}) do
-		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = f[7], t0 = now }
+		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = f[7], air = f[8] == true, t0 = now }
 	end
 	self.boats = data.boats or {}
+	self.fires = data.fires or {}
+	self.cargos = data.cargos or {}
 	self.missiles = {}
 	for _, m in ipairs(data.missiles or {}) do
 		self.missiles[m[1]] = { id = m[1], kind = m[2], nation = m[3], from = m[4], to = m[5], speed = m[6], progress = m[7], t0 = now }
@@ -134,7 +138,7 @@ function ClientState:applyOrders(data)
 	local now = os.clock()
 	if data.fleet then
 		local f = data.fleet
-		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = 1, t0 = now }
+		self.fleets[f[1]] = { id = f[1], nation = f[2], troops = f[3], path = f[4], speed = f[5], target = f[6], progress = 1, air = f[7] == true, t0 = now }
 	end
 	if data.fleetEnd then self.fleets[data.fleetEnd] = nil end
 	if data.orders then self.orders = data.orders end
@@ -145,6 +149,8 @@ function ClientState:applyOrders(data)
 		end
 	end
 	if data.boats then self.boats = data.boats end
+	if data.fires then self.fires = data.fires end
+	if data.cargos then self.cargos = data.cargos end
 	if data.bots then self.botStates = data.bots end
 	self:fire("orders")
 end

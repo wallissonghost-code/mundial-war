@@ -38,7 +38,7 @@ local function isPercent(v)
 end
 
 -- Returns ok, message (message may be nil for silent actions).
-function CommandService.handle(userId, displayName, action, a, b, clock)
+function CommandService.handle(userId, displayName, action, a, b, clock, c)
 	if type(action) ~= "string" then return false, nil end
 	if not allow(userId, clock or ctx.now()) then return false, nil end
 	local A = ctx.Protocol.Actions
@@ -46,12 +46,22 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 	local nation = ctx.Nations.forUser(userId)
 	local nid = nation and nation.alive and nation.id or nil
 
+	if action == A.Vote then
+		if type(a) ~= "string" then return false, "Modo inválido." end
+		return ctx.Match.vote(userId, a)
+	end
+
 	if action == A.Spawn then
 		if nid then return false, "Você já tem uma nação." end
 		if not ctx.Match.canSpawn() then return false, "Não é possível fundar uma nação agora." end
 		if not isInt(a) or not Map:valid(a) then return false, "Célula inválida." end
 		if not ctx.Nations.canRespawn(userId) then return false, "Aguarde alguns segundos para renascer." end
 		local name = type(displayName) == "string" and string.sub(displayName, 1, 24) or "Jogador"
+		if ctx.mode == "extreme" then
+			local n, why = ctx.Nations.takeover(userId, name, a)
+			if not n then return false, why end
+			return true, "Você agora governa " .. n.name .. "."
+		end
 		local n, why = ctx.Nations.create("player", name, a, { userId = userId })
 		if not n then return false, why end
 		return true, "Nação fundada! Capital em " .. ((Map.countries[Map.country[a]] or {}).name or "terra livre") .. "."
@@ -92,7 +102,7 @@ function CommandService.handle(userId, displayName, action, a, b, clock)
 		if not isInt(a) or not Map:valid(a) then return false, "Alvo inválido." end
 		local kind = action == A.Nuke and "atomic" or action == A.Airstrike and "airstrike" or b
 		if type(kind) ~= "string" or not Config.Weapons[kind] then return false, "Arma inválida." end
-		return ctx.Strategic.launch(nid, a, kind)
+		return ctx.Strategic.launch(nid, a, kind, c)
 	elseif action == A.Ally or action == A.Decline or action == A.BreakAlliance or action == A.War then
 		if not isInt(a) or not ctx.Nations.get(a) or a == nid then return false, "Nação inválida." end
 		if action == A.Ally then return ctx.Diplomacy.requestAlliance(nid, a) end

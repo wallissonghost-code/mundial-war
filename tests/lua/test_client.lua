@@ -80,6 +80,13 @@ do
 	run(1)
 	ok(M.warnings == nil, "no warnings during boot")
 	ok(M.services.Players.CharacterAutoLoads == false, "characters disabled")
+	-- every round opens with the mode menu; vote for the classic mode
+	ok(texts(gui):find("Conquista Extrema") and texts(gui):find("Votar"), "mode menu shown")
+	local votes = find(gui, function(c) return c.ClassName == "TextButton" and rawget(c, "_props").Text == "Votar" end)
+	ok(#votes == 2, "one vote button per mode")
+	votes[1].Activated:Fire()
+	run(1)
+	ok(rawget(gui.MundialWar.ModeMenu, "_props").Visible == false, "menu closes after everyone voted")
 	local all = texts(gui)
 	ok(all:find("fundar sua nação"), "spawn banner shown")
 	ok(M.pixelWrites >= 1, "map painted through EditableImage")
@@ -194,4 +201,27 @@ do
 	rows = #find(M.localPlayer.PlayerGui, function(c) return c.ClassName == "Frame" and c.Parent and c.Parent.Name == "TerritoryRows" end)
 	ok(rows > 1000, "fallback renderer draws rows (" .. rows .. " frames)")
 	print("PASS fallback renderer without EditableImage")
+end
+
+do
+	boot(true)
+	local gui = M.localPlayer.PlayerGui
+	run(1)
+	local votes = find(gui, function(c) return c.ClassName == "TextButton" and rawget(c, "_props").Text == "Votar" end)
+	votes[2].Activated:Fire()
+	run(1.5)
+	ok(texts(gui):find("Clique num país"), "extreme spawn banner")
+	local sx, sy = screenOf(brasilia + 2)
+	click(sx, sy)
+	run(0.5)
+	ok(texts(gui):find("Você agora governa Brasil"), "took Brazil: " .. texts(gui.MundialWar.Notices))
+	run(26)
+	ok(texts(gui.MundialWar.PlayerCard):find("🛢"), "oil shown in Conquista Extrema")
+	for _, b in ipairs(find(gui, function(c) return c.ClassName == "TextButton" and rawget(c, "_props").Text == "🏗" end)) do b.Activated:Fire() end
+	run(0.3)
+	local wall = find(gui, function(c) return c.ClassName == "TextButton" and (rawget(c, "_props").Text or ""):find("Muro") end)
+	ok(#wall == 1 and rawget(wall[1], "_props").Visible ~= false, "extreme buildings in the tray")
+	run(20)
+	ok(M.warnings == nil, "no server errors in Conquista Extrema")
+	print("PASS client in Conquista Extrema")
 end

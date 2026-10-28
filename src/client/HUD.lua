@@ -168,6 +168,30 @@ function HUD.new(state, gui, handlers)
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 	layout()
 
+	-- Mode menu: shown during the vote that opens every round -----------------------------------
+	self.menu = panel(gui, { Name = "ModeMenu", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(560, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 60 })
+	make("UIPadding", self.menu, { PaddingTop = UDim.new(0, 16), PaddingBottom = UDim.new(0, 16), PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16) })
+	make("UIListLayout", self.menu, { Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder })
+	make("TextLabel", self.menu, { LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Font = BOLD, TextSize = 28, TextColor3 = ACCENT, Text = "MUNDIAL WAR", ZIndex = 61 })
+	self.menuTimer = make("TextLabel", self.menu, { LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Font = FONT, TextSize = 13, TextColor3 = MUTED, Text = "Escolha o modo da próxima partida", ZIndex = 61 })
+	local cards = make("Frame", self.menu, { LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, ZIndex = 61 })
+	make("UIListLayout", cards, { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder })
+	self.modeCards = {}
+	for index, mode in ipairs(self.Config.ModeOrder) do
+		local def = self.Config.Modes[mode]
+		local card = make("Frame", cards, { LayoutOrder = index, Size = UDim2.new(0.5, -5, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Color3.fromRGB(28, 38, 52), BorderSizePixel = 0, ZIndex = 61 })
+		make("UICorner", card, { CornerRadius = UDim.new(0, 8) })
+		local stroke = make("UIStroke", card, { Thickness = 2, Color = ACCENT, Transparency = 1 })
+		make("UIPadding", card, { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) })
+		make("UIListLayout", card, { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+		make("TextLabel", card, { LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Font = BOLD, TextSize = 17, TextColor3 = TEXT, TextXAlignment = Enum.TextXAlignment.Left, Text = def.icon .. " " .. def.name, ZIndex = 62 })
+		make("TextLabel", card, { LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = MUTED, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = def.description, ZIndex = 62 })
+		local votes = make("TextLabel", card, { LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = ACCENT, TextXAlignment = Enum.TextXAlignment.Left, Text = "0 votos", ZIndex = 62 })
+		local vote = button(card, "Votar", { LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 30), ZIndex = 62 })
+		vote.Activated:Connect(function() self.h.onVote(mode) end)
+		self.modeCards[mode] = { stroke = stroke, votes = votes }
+	end
+
 	self:setPercent(state.percent)
 	return self
 end
@@ -221,6 +245,18 @@ function HUD:refreshMe()
 	end
 	self.troopsText.Text = string.format("👥 <b>%s</b> <font color=\"#96a0ac\">/ %s  +%s/s</font>", F(me.troops), F(me.max), F(me.rate))
 	self.goldText.Text = string.format("💰 <b>%s</b> <font color=\"#96a0ac\">+%s/s · %.1f%% do mundo</font>", F(me.gold), F(me.goldRate), me.share * 100)
+	if me.mode == "extreme" then
+		self.goldText.Text = string.format("💰 <b>%s</b> <font color=\"#96a0ac\">+%s/s</font>  🛢 <b>%s</b> <font color=\"#96a0ac\">+%s/s</font>", F(me.gold), F(me.goldRate), F(me.oil), F(me.oilRate))
+	end
+	-- show only what exists in the current mode
+	for kind, b in pairs(self.trayButtons) do
+		local m = self.Config.Buildings[kind].mode
+		b.Visible = m == nil or m == me.mode
+	end
+	for kind, b in pairs(self.weaponButtons) do
+		local m = self.Config.Weapons[kind].mode
+		b.Visible = m == nil or m == me.mode
+	end
 	self.avatarStroke.Color = rgb(state:nationColor(state.you))
 	local mine = 0
 	for _, o in ipairs(state.orders) do
@@ -354,6 +390,20 @@ function HUD:allianceRequest(fromId, seconds, onAccept, onDecline)
 	yes.Activated:Connect(function() card:Destroy() onAccept() end)
 	no.Activated:Connect(function() card:Destroy() onDecline() end)
 	task.delay(seconds or 30, function() if card.Parent then card:Destroy() end end)
+end
+
+
+function HUD:refreshMenu(myVote)
+	local match = self.state.match
+	local show = match.phase == "vote"
+	self.menu.Visible = show
+	if not show then return end
+	self.menuTimer.Text = "Escolha o modo da próxima partida · " .. math.ceil(self.state:timeLeft()) .. "s"
+	for mode, c in pairs(self.modeCards) do
+		local n = match.votes and match.votes[mode] or 0
+		c.votes.Text = n .. (n == 1 and " voto" or " votos")
+		c.stroke.Transparency = myVote == mode and 0 or 1
+	end
 end
 
 return HUD

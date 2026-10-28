@@ -8,7 +8,7 @@ local chunks = {}          -- chunk key -> { cell = true }
 local disabled = {}        -- cell -> true while an EMP keeps it off
 local CHUNK = 16
 local changes = {}         -- cell -> building or false (for replication)
-local EMPTY = { growth = 0, capacity = 0, gold = 0, attack = 0, count = {} }
+local EMPTY = { growth = 0, capacity = 0, gold = 0, oil = 0, attack = 0, count = {} }
 
 function BuildingService.init(context)
 	ctx = context
@@ -29,7 +29,7 @@ end
 local function bucket(nid)
 	local t = totals[nid]
 	if not t then
-		t = { growth = 0, capacity = 0, gold = 0, attack = 0, count = {} }
+		t = { growth = 0, capacity = 0, gold = 0, oil = 0, attack = 0, count = {} }
 		totals[nid] = t
 	end
 	return t
@@ -44,6 +44,7 @@ local function economy(b, sign)
 	t.capacity = t.capacity + sign * (Stats.stat(Config, b.kind, level, "capacity") or 0)
 	t.gold = t.gold + sign * (Stats.stat(Config, b.kind, level, "gold") or 0)
 	t.attack = t.attack + sign * (Stats.stat(Config, b.kind, level, "attackBonus") or 0)
+	t.oil = t.oil + sign * (Stats.stat(Config, b.kind, level, "oil") or 0)
 end
 
 local function count(b, sign)
@@ -128,6 +129,7 @@ function BuildingService.canBuild(nid, cell, kind)
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
 	if not n or not n.alive then return false, "Você não tem nação." end
 	if not def then return false, "Construção inválida." end
+	if def.mode and def.mode ~= ctx.mode then return false, def.name .. " só existe na Conquista Extrema." end
 	if not Map:valid(cell) or ctx.Territory.ownerOf(cell) ~= nid then
 		return false, "Construa em uma célula do seu território."
 	end

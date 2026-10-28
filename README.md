@@ -1,4 +1,4 @@
-# Mundial War — 1.1
+# Mundial War — 1.2
 
 Jogo de estratégia territorial mundial em tempo real para Roblox. O mapa-múndi é a tela: você funda uma nação, escolhe quantas tropas enviar, clica numa direção e vê a fronteira avançar sozinha, até dominar 80% das terras do planeta.
 
@@ -9,6 +9,20 @@ Jogo de estratégia territorial mundial em tempo real para Roblox. O mapa-múndi
 - **Publicação:** continua manual, pelo Studio. Este repositório não tem workflows, IDs de place/universe nem segredos.
 - **Ative em Game Settings → Security: "Enable Mesh / Image APIs"** (no site: Creator Dashboard → Configure → Settings). Sem isso o jogo publicado usa o renderizador de reserva (Frames), que funciona, mas é mais pesado. No Studio o modo rápido funciona direto.
 - Defina **Max Players = 55** nas configurações do place (`GameConfig.Match.MaxPlayers` documenta o valor).
+
+## Modos de jogo
+
+Cada rodada começa com um menu de votação (15 s; termina antes se todos votarem). O modo mais votado vale para a rodada.
+
+- **🌍 Mundial:** funde sua nação em qualquer terra livre e cresça a partir de um ponto. Nações de IA nascem nos 36 maiores países e há 20 tribos.
+- **🔥 Conquista Extrema:** todos os países com 6 células ou mais começam ocupados pela IA (cerca de 165). Você clica num país e passa a governá-lo inteiro, com as tropas, o ouro e o petróleo dele. Se sair do jogo, a IA reassume o país. Libera:
+  - 🧱 **Muro** (400): alcance 2, ataques ali custam ×3;
+  - 🪖 **Trincheira** (700): alcance 4, frentes inimigas perdem 3%/s e você perde metade das tropas ao ceder terreno;
+  - 🎆 **Anti-naval** (1.600, litoral): alcance 10, 20 de dano/s em barcos inimigos, desgasta frotas e deixa desembarques ×2 mais caros;
+  - 🛩 **Antiaérea de aviões** (1.000): alcance 12, 85% de chance de derrubar aviões (ataque aéreo, fragmentação, bomba de fogo, ponte aérea); não para mísseis do silo;
+  - 🛢 **Poço de petróleo** (1.200): +4 petróleo/s; o petróleo paga a ponte aérea, a bomba de fogo e o Fim de Era;
+  - 🪂 **Ponte aérea** (base aérea, 500 ouro + 60 petróleo): leva até 4.000 tropas (+2.000 por nível da base) de avião, quase 3× mais rápido que navio, para qualquer terra no alcance;
+  - 🔥 **Bomba de fogo** (base aérea, 3.000 ouro + 80 petróleo): incêndio que cresce devagar até 9 células por 30 s, queimando tropas e destruindo construções.
 
 ## Como se joga
 
@@ -47,6 +61,10 @@ Cada construção nova do mesmo tipo custa 35% a mais. Construções capturadas 
 
 1.500 ouro, comprados no porto. 100 de vida, alcance 9 e 14 de dano por segundo, mais fortes conforme o nível do porto onde nasceram. Patrulham em volta do ponto que você escolher (precisa ser água ligada ao porto). Atacam apenas nações com quem você está em guerra.
 
+## Navios de carga (os dois modos)
+
+Cada porto manda navios 🚤 numa rota comercial a cada 30 s (um no mar por nível do porto). Quando o navio volta, você recebe 250 de ouro (+60 por nível do porto). Um barco de defesa em guerra com o dono que chegar perto captura a carga e recebe 1,5× o valor.
+
 ## Bombas e ataques
 
 O botão 💣 aparece quando você tem base aérea ou silo. Escolha a arma, clique no alvo (o círculo vermelho mostra a área) e clique de novo para lançar. A defesa antiaérea do alvo pode derrubar qualquer uma.
@@ -58,6 +76,7 @@ O botão 💣 aparece quando você tem base aérea ou silo. Escolha a arma, cliq
 | ⚡ EMP | 4.000 | Silo | Raio 12: desliga as construções inimigas por 45 s |
 | ☢ Atômica | 8.000 | Silo | Raio 10: destrói construções, mata tropas, centro fica sem dono |
 | ☣ Hidrogênio | 20.000 | Silo nível 3 | Raio 18: a maior explosão |
+| 🌋 Fim de Era | 50.000 (+400 petróleo na Extrema) | Silo nível 5 | Ogivas no alvo e nas capitais de até 4 outros inimigos em guerra com você; cada uma destrói, mata tropas, deixa fogo e um EMP de 60 s. Nenhuma antiaérea para |
 
 Todos os números estão em `src/shared/GameConfig.lua`; as contas de nível ficam em `src/shared/BuildingStats.lua`.
 
@@ -89,13 +108,14 @@ src/client/   init.client · ClientState · MapRenderer · CameraController
 ## Testes
 
 ```sh
-python3 tests/run_lua.py tests/lua/test_rules.lua tests/lua/test_world.lua tests/lua/test_client.lua
+python3 tests/run_lua.py tests/lua/test_rules.lua tests/lua/test_world.lua tests/lua/test_modes.lua tests/lua/test_client.lua
 ```
 
 Usam a biblioteca Lua 5.4 do sistema (`liblua5.4`), sem Roblox:
 
 - `test_rules`: spawn em terra/água/ocupada, expansão progressiva e conectada, barreira de água, bloqueio de "teletransporte", PvP, alianças, portos e desembarque, níveis das construções, barcos de defesa (combate, patrulha, roubo de ouro), todas as bombas, defesa antiaérea, vitória e nova rodada, validação e limite de comandos.
 - `test_world`: mapa real, bots na própria capital, ritmo (2.500 → ~10.000 tropas em 60 s) e desempenho com 5, 10, 20, 30 e 55 nações.
+- `test_modes`: votação, tomada de país na Conquista Extrema (165 países), muro, trincheira, anti-naval, petróleo, ponte aérea, bomba de fogo, antiaérea de aviões, Fim de Era e navios de carga com captura.
 - `test_client`: roda o servidor **e** o cliente reais sobre uma emulação mínima da API Roblox (`tests/lua/roblox_mock.lua`), que serializa remotes como o Roblox, confere escritas no EditableImage e simula cliques, zoom, arraste e teclado. `MW_DUMP=pasta` grava a interface para `tests/render_gui.py` desenhar uma captura aproximada.
 
 **Ainda precisa de teste no Studio:** layout real dos textos e emojis, toque em celular, multiplayer real e o limite de memória do EditableImage em aparelhos fracos. Os testes cobrem regras e integração, não substituem jogar.

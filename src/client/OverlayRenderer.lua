@@ -30,6 +30,7 @@ function OverlayRenderer.new(state, camera, world)
 	self.layer = make("Frame", world, { Name = "Overlay", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 2 })
 	self.labels, self.capitals, self.icons, self.orderItems = {}, {}, {}, {}
 	self.fleetItems, self.missileItems, self.shipItems = {}, {}, {}
+	self.fireItems, self.cargoItems = {}, {}
 	self.thumbs = {}
 	self.aim = nil
 	self.needsLayout = true
@@ -316,6 +317,35 @@ function OverlayRenderer:updateOrders()
 		end
 	end
 	release(self.shipItems)
+
+	-- fires: a translucent blaze that grows with the server's radius
+	for _, f in ipairs(state.fires or {}) do
+		local id, center, radius = f[1], f[2], f[3]
+		local item = pool(self.fireItems, id, function()
+			local it = { glow = make("Frame", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(255, 120, 30), BackgroundTransparency = 0.45, ZIndex = 4 }) }
+			make("UICorner", it.glow, { CornerRadius = UDim.new(1, 0) })
+			make("UIStroke", it.glow, { Color = Color3.fromRGB(255, 70, 20), Thickness = 2 })
+			local core = make("Frame", it.glow, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.55, 0.55), BackgroundColor3 = Color3.fromRGB(255, 200, 60), BackgroundTransparency = 0.35, ZIndex = 4 })
+			make("UICorner", core, { CornerRadius = UDim.new(1, 0) })
+			return it
+		end)
+		item.glow.Position = self:pos(center)
+		item.glow.Size = UDim2.fromScale(radius * 2 / self.Map.W, radius * 2 / self.Map.H)
+	end
+	release(self.fireItems)
+
+	-- cargo ships carrying gold home
+	for _, c in ipairs(state.cargos or {}) do
+		local id, nation, cell = c[1], c[2], c[3]
+		local item = pool(self.cargoItems, id, function()
+			return { icon = make("TextLabel", self.layer, { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Text = "🚤", TextScaled = true, Font = FONT, ZIndex = 5 }) }
+		end)
+		local size = math.clamp(cam.scale * 1.3, 10, 18)
+		item.icon.Size = UDim2.fromOffset(size, size)
+		item.icon.Visible = lod >= 1 or nation == state.you
+		TweenService:Create(item.icon, TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear), { Position = self:pos(cell) }):Play()
+	end
+	release(self.cargoItems)
 end
 
 -- Fleets and missiles move every frame between server updates.
@@ -351,7 +381,7 @@ function OverlayRenderer:animate()
 		local bx, by = self:center(b)
 		local t = progress - k
 		item.icon.Position = self:posXY(ax + (bx - ax) * t, ay + (by - ay) * t)
-		item.icon.Text = " ⛵ " .. self.Protocol.formatK(f.troops) .. " "
+		item.icon.Text = (f.air and " 🪂 " or " ⛵ ") .. self.Protocol.formatK(f.troops) .. " "
 		item.route.Visible = f.nation == state.you or self.camera:lod() >= 1
 	end
 	release(self.fleetItems)

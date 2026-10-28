@@ -2,11 +2,29 @@
 -- Every gameplay number lives here; services must not hard-code tuning values.
 local GameConfig = {}
 
-GameConfig.Version = "1.0.0"
+GameConfig.Version = "1.2.0"
 GameConfig.DEBUG_MODE = false          -- shows cell/chunk/order/bot debug overlays (never enable in production)
+
+-- Game modes ---------------------------------------------------------------
+-- A round opens with a short vote; the most voted mode wins (ties keep the first in ModeOrder).
+GameConfig.Modes = {
+	classic = { name = "Mundial", icon = "🌍",
+		description = "Funde sua nação em qualquer terra livre e cresça a partir de um ponto. Nações de IA nascem nos maiores países." },
+	extreme = { name = "Conquista Extrema", icon = "🔥",
+		description = "Escolha um país inteiro e domine os outros. Todos os países já começam ocupados. Libera muros, trincheiras, anti-naval, antiaérea contra aviões, petróleo, ponte aérea e bomba de fogo." },
+}
+GameConfig.ModeOrder = { "classic", "extreme" }
+GameConfig.Extreme = {
+	MinCountryCells = 6,               -- smaller countries stay as free land
+	BaseTroops = 1500,
+	TroopsPerCell = 12,
+	StartGold = 2500,
+	StartOil = 200,
+}
 
 -- Match flow ---------------------------------------------------------------
 GameConfig.Match = {
+	VoteSeconds = 15,                  -- mode vote at the start of every round (ends early once every player voted)
 	MaxPlayers = 55,                   -- set the same value in Game Settings > Places > Max Players
 	SpawnPhaseSeconds = 25,            -- players pick a start; no expansion yet
 	VictoryPercent = 0.80,             -- share of all land cells
@@ -50,6 +68,12 @@ GameConfig.Gold = {
 	Base = 10,
 	PerCell = 0.1,
 	StartGold = 600,
+}
+
+-- Oil (Conquista Extrema): produced by oil wells, spent on the air bridge, fire bombs and the End of an Era
+GameConfig.Oil = {
+	Base = 0,
+	PerCell = 0.01,
 }
 
 GameConfig.TroopPercents = { 0.10, 0.25, 0.50, 0.75, 1.00 }
@@ -128,9 +152,26 @@ GameConfig.Buildings = {
 		purpose = "Pode derrubar mísseis e aviões inimigos que caiam dentro do alcance." },
 	silo = { name = "Silo de mísseis", icon = "🚀", cost = 6000, requires = "factory", cooldownFactor = 1,
 		perLevel = { cooldownFactor = -0.12 },
-		purpose = "Lança bombas EMP, atômicas e, a partir do nível 3, de hidrogênio. Cada nível recarrega mais rápido." },
+		purpose = "Lança bombas EMP, atômicas, de hidrogênio (nível 3) e o Fim de Era (nível 5). Cada nível recarrega mais rápido." },
+	-- Conquista Extrema only
+	wall = { name = "Muro", icon = "🧱", cost = 400, radius = 2, defense = 3, defensive = true, mode = "extreme",
+		perLevel = { radius = 0.5, defense = 0.6 },
+		purpose = "Barreira curta e barata: atacar perto do muro custa muito mais tropas." },
+	trench = { name = "Trincheira", icon = "🪖", cost = 700, radius = 4, attrition = 0.03, shelter = 0.5, defensive = true, mode = "extreme",
+		perLevel = { radius = 1, attrition = 0.01, shelter = -0.06 },
+		purpose = "Seus soldados se protegem: frentes inimigas perdem tropas a cada segundo e você perde menos ao ceder terreno." },
+	antinaval = { name = "Anti-naval", icon = "🎆", cost = 1600, radius = 10, damage = 20, landing = 2, coastal = true, defensive = true, mode = "extreme",
+		perLevel = { radius = 2, damage = 6, landing = 0.4 },
+		purpose = "Só no litoral. Atira em barcos e frotas inimigas no alcance e encarece desembarques." },
+	flak = { name = "Antiaérea de aviões", icon = "🛩", cost = 1000, radius = 12, intercept = 0.85, defensive = true, mode = "extreme",
+		perLevel = { radius = 2, intercept = 0.03 },
+		purpose = "Especializada em aviões: derruba ataques aéreos, bombas de fragmentação, bombas de fogo e pontes aéreas inimigas. Não para mísseis do silo." },
+	oilwell = { name = "Poço de petróleo", icon = "🛢", cost = 1200, oil = 4, mode = "extreme",
+		perLevel = { oil = 3 },
+		purpose = "Extrai petróleo, usado na ponte aérea, na bomba de fogo e no Fim de Era." },
 }
-GameConfig.BuildingOrder = { "city", "factory", "port", "bunker", "tower", "machinegun", "artillery", "tankfactory", "airfield", "airdefense", "silo" }
+GameConfig.BuildingOrder = { "city", "factory", "port", "bunker", "tower", "machinegun", "artillery", "tankfactory", "airfield", "airdefense", "silo",
+	"wall", "trench", "antinaval", "flak", "oilwell" }
 
 -- Naval ------------------------------------------------------------------------
 GameConfig.Naval = {
@@ -147,6 +188,22 @@ GameConfig.Naval = {
 	BoatDamage = 14,                   -- health per second against enemy boats (+4 per port level)
 	BoatTransportDamage = 0.1,         -- share of a passing enemy transport destroyed per second
 	BoatGoldSteal = 10,                -- gold per second taken from each enemy port in reach
+	-- Cargo ships: every port sends gold ships on trade runs; enemy defence boats capture them
+	CargoInterval = 30,                -- seconds between ships of one port
+	CargoPerPortLevel = 1,             -- ships at sea per port level
+	CargoSpeed = 6,
+	CargoTripCells = 30,               -- how far out the trade run goes
+	CargoValue = 250,                  -- gold delivered when the ship comes home (+60 per port level)
+	CargoValuePerLevel = 60,
+	CargoCaptureFactor = 1.5,          -- a capturing nation receives value * factor
+	-- Air bridge (Conquista Extrema): troops flown from an air base, faster than ships
+	AirliftSpeed = 40,
+	AirliftMaxTroops = 4000,           -- per flight (+2000 per air base level)
+	AirliftMaxPerLevel = 2000,
+	AirliftGold = 500,
+	AirliftOil = 60,
+	AirliftCooldown = 20,
+	AirliftInterceptLoss = 0.6,        -- share of the troops lost when an anti-air shoots the flight
 }
 
 -- Strategic weapons --------------------------------------------------------------
@@ -167,8 +224,21 @@ GameConfig.Weapons = {
 	hydrogen = { name = "Bomba de hidrogênio", icon = "☣", gold = 20000, launcher = "silo", minLevel = 3, cooldown = 150, speed = 24,
 		radius = 18, fallout = 11, troopKill = 2.5, destroys = true,
 		purpose = "A maior explosão. Requer silo nível 3." },
+	firebomb = { name = "Bomba de fogo", icon = "🔥", gold = 3000, oil = 80, launcher = "airfield", aircraft = true, cooldown = 45, speed = 38,
+		radius = 2, fire = { radius = 9, grow = 0.4, seconds = 30, troopBurn = 0.25 }, destroys = false, mode = "extreme",
+		purpose = "Incêndio que se espalha devagar até 9 células: queima tropas a cada segundo e destrói construções que o fogo alcança." },
+	endofera = { name = "Fim de Era", icon = "🌋", gold = 50000, oil = 400, launcher = "silo", minLevel = 5, cooldown = 300, speed = 20,
+		radius = 10, troopKill = 2, warheads = 5, unstoppable = true, destroys = true,
+		fire = { radius = 12, grow = 0.6, seconds = 40, troopBurn = 0.3 }, disable = 60,
+		purpose = "Ogivas múltiplas: atinge o alvo e as capitais de até 4 outros inimigos em guerra com você, com fogo e EMP juntos. Nenhuma antiaérea consegue parar. Requer silo nível 5." },
+	airlift = { name = "Ponte aérea", icon = "🪂", gold = 500, oil = 60, launcher = "airfield", aircraft = true, cooldown = 20, speed = 40,
+		radius = 1, troops = true, mode = "extreme",
+		purpose = "Leva tropas de avião, muito mais rápido que navio, para qualquer terra no alcance da base aérea. Usa o % de tropas escolhido." },
 }
-GameConfig.WeaponOrder = { "airstrike", "cluster", "emp", "atomic", "hydrogen" }
+-- airstrike, cluster and firebomb are aircraft: the flak building can shoot them down
+GameConfig.Weapons.airstrike.aircraft = true
+GameConfig.Weapons.cluster.aircraft = true
+GameConfig.WeaponOrder = { "airlift", "airstrike", "cluster", "firebomb", "emp", "atomic", "hydrogen", "endofera" }
 
 -- Diplomacy ----------------------------------------------------------------------
 GameConfig.Diplomacy = {
@@ -180,6 +250,7 @@ GameConfig.Diplomacy = {
 GameConfig.Bots = {
 	Nations = 36,                      -- largest countries become AI nations at their real capitals
 	Tribes = 20,                       -- small, weak factions in other countries
+	ExtremeThinkInterval = 2.0,        -- Conquista Extrema has ~180 AI countries
 	ThinkInterval = 1.2,               -- each bot; ticks are staggered across bots
 	TribeThinkInterval = 3,
 	AttackWhenStronger = 1.3,          -- troop ratio before picking a fight

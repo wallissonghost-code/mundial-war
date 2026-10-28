@@ -10,6 +10,7 @@ function BuildingStats.stat(Config, kind, level, field)
 	local v = base + inc * ((level or 1) - 1)
 	if field == "intercept" then v = math.min(0.95, v) end
 	if field == "support" then v = math.max(0.4, v) end
+	if field == "shelter" then v = math.max(0.15, v) end
 	if field == "cooldownFactor" then v = math.max(0.4, v) end
 	return v
 end
@@ -68,6 +69,19 @@ function BuildingStats.lines(Config, kind, level)
 	elseif kind == "silo" then
 		out[#out + 1] = "Recarga ×" .. num(s("cooldownFactor"))
 		if level >= 3 then out[#out + 1] = "Libera bomba de hidrogênio" end
+		if level >= 5 then out[#out + 1] = "Libera o Fim de Era" end
+	elseif kind == "wall" then
+		out[#out + 1] = "Ataques custam ×" .. num(s("defense"))
+	elseif kind == "trench" then
+		out[#out + 1] = "Frentes inimigas perdem " .. pct(s("attrition")) .. "/s"
+		out[#out + 1] = "Você perde ×" .. num(s("shelter")) .. " tropas ao ceder terreno"
+	elseif kind == "antinaval" then
+		out[#out + 1] = num(s("damage")) .. " de dano/s em barcos"
+		out[#out + 1] = "Desembarques custam ×" .. num(s("landing"))
+	elseif kind == "flak" then
+		out[#out + 1] = pct(s("intercept")) .. " de chance de derrubar aviões"
+	elseif kind == "oilwell" then
+		out[#out + 1] = "+" .. num(s("oil")) .. " petróleo/s"
 	end
 	local r = s("radius")
 	if r then table.insert(out, 1, "Alcance: " .. num(r) .. " células") end

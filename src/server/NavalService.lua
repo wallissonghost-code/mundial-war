@@ -4,6 +4,9 @@ local NavalService = {}
 local ctx, Config, Map, Territory
 local fleets = {}        -- list of { id, nation, troops, path, progress, target }
 local boats = {}         -- list of { id, nation, port, level, x, y, hp, center, path, step, waypoint }
+local cargos = {}        -- list of { id, nation, port, path, progress, value }
+local portTimers = {}    -- port cell -> next time it sends a cargo ship
+local cargoClock = 0
 local waterBody = nil    -- cell -> connected water body id
 local nextId = 1
 local visit, prev, vstamp = {}, {}, 0
@@ -39,7 +42,11 @@ function NavalService.init(context)
 end
 
 function NavalService.reset()
-	fleets, boats, nextId = {}, {}, 1
+	fleets, boats, cargos, portTimers, nextId, cargoClock = {}, {}, {}, {}, 1, 0
+end
+
+function NavalService.cargos()
+	return cargos
 end
 
 function NavalService.fleets()
@@ -181,6 +188,26 @@ function NavalService.boatsAt(portCell)
 end
 
 -- Defence boat: bought at one of your ports; patrols around that port until you send it elsewhere.
+-- Air bridge: troops fly in a straight line from an air base, ignoring water.
+function NavalService.launchAir(nid, fromCell, targetCell, troops)
+	local ax, ay = Map:xy(fromCell)
+	local bx, by = Map:xy(targetCell)
+	local steps = math.max(1, math.floor(math.max(math.abs(bx - ax), math.abs(by - ay))))
+	local path = {}
+	for k = 0, steps do
+		local t = k / steps
+		path[#path + 1] = Map:index(math.floor(ax + (bx - ax) * t + 0.5), math.floor(ay + (by - ay) * t + 0.5))
+	end
+	local fleet = { id = nextId, nation = nid, troops = troops, path = path, progress = 1, target = targetCell,
+		air = true, speed = Config.Naval.AirliftSpeed }
+	nextId = nextId + 1
+	fleets[#fleets + 1] = fleet
+	local owner = Territory.ownerOf(targetCell)
+	if owner > 0 then ctx.Diplomacy.ensureWar(nid, owner) end
+	ctx.emit(nil, { k = ctx.Protocol.Events.Orders, fleet = { fleet.id, nid, troops, path, fleet.speed, targetCell, true } })
+	return fleet
+end
+
 function NavalService.buyBoat(nid, portCell)
 	local N = Config.Naval
 	local n = ctx.Nations.get(nid)
@@ -233,6 +260,11 @@ function NavalService.removeNation(nid)
 		if boats[i].nation ~= nid then boats[k] = boats[i] k = k + 1 end
 	end
 	for i = k, #boats do boats[i] = nil end
+	k = 1
+	for i = 1, #cargos do
+		if cargos[i].nation ~= nid then cargos[k] = cargos[i] k = k + 1 end
+	end
+	for i = k, #cargos do cargos[i] = nil end
 end
 
 local function boatRange(b) return Config.Naval.BoatRange + (b.level - 1) end
@@ -286,7 +318,7 @@ local function boatCombat(dt)
 		end
 		if target then target.hp = target.hp - boatDamage(b) * dt end
 		for _, f in ipairs(fleets) do
-			if f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
+			if not f.air and f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
 				local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
 				if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r2 then
 					f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
@@ -308,6 +340,37 @@ local function boatCombat(dt)
 			end)
 		end
 	end
+	-- coastal anti-naval batteries (Conquista Extrema)
+	if ctx.mode == "extreme" then
+		for _, b in ipairs(boats) do
+			local here = boatCell(b)
+			if here then
+				local dmg = nil
+				ctx.Buildings.near(here, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
+					if p.kind == "antinaval" and p.active and p.owner ~= b.nation and ctx.Diplomacy.relation(p.owner, b.nation) == "war" then
+						local r = ctx.Buildings.stat(p, "radius")
+						local px, py = Map:xy(p.cell)
+						if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r * r then
+							dmg = math.max(dmg or 0, ctx.Buildings.stat(p, "damage"))
+						end
+					end
+				end)
+				if dmg then b.hp = b.hp - dmg * dt end
+			end
+		end
+		for _, f in ipairs(fleets) do
+			if not f.air then
+				local pos = f.path[math.min(#f.path, math.floor(f.progress))]
+				ctx.Buildings.near(pos, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
+					if p.kind == "antinaval" and p.active and p.owner ~= f.nation and ctx.Diplomacy.relation(p.owner, f.nation) == "war"
+						and Map:distance(p.cell, pos) <= ctx.Buildings.stat(p, "radius") then
+						f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
+						return true
+					end
+				end)
+			end
+		end
+	end
 	local k = 1
 	for i = 1, #boats do
 		local b = boats[i]
@@ -319,6 +382,117 @@ local function boatCombat(dt)
 		end
 	end
 	for i = k, #boats do boats[i] = nil end
+end
+
+-- Trade run for a cargo ship: out to a water cell about CargoTripCells away and back.
+local function tradeRoute(portCell)
+	local start = waterNeighbor(portCell)
+	if not start then return nil end
+	local N = Config.Naval
+	vstamp = vstamp + 1
+	local queue, head = { start }, 1
+	visit[start] = vstamp
+	prev[start] = 0
+	local far, farD = start, 0
+	local sx, sy = Map:xy(start)
+	local scratch = {}
+	local limit = math.floor(math.pi * N.CargoTripCells * N.CargoTripCells)
+	while head <= #queue and #queue < limit do
+		local i = queue[head]
+		head = head + 1
+		local x, y = Map:xy(i)
+		local d = (x - sx) ^ 2 + (y - sy) ^ 2
+		if d > farD and ctx.random() < 0.6 then far, farD = i, d end
+		local m = Map:neighbors(i, scratch)
+		for k = 1, m do
+			local j = scratch[k]
+			if not Map.land[j] and visit[j] ~= vstamp then
+				visit[j] = vstamp
+				prev[j] = i
+				queue[#queue + 1] = j
+			end
+		end
+	end
+	if far == start then return nil end
+	local back = {}
+	local i = far
+	while i ~= 0 do back[#back + 1] = i i = prev[i] end
+	local path = {}
+	for k = #back, 1, -1 do path[#path + 1] = back[k] end      -- port -> far
+	for k = 2, #back do path[#path + 1] = back[k] end          -- far -> port
+	return path
+end
+
+local function cargoTick(dt)
+	local N = Config.Naval
+	cargoClock = cargoClock + dt
+	if cargoClock >= 1 then
+		cargoClock = 0
+		local now = ctx.now()
+		local atSea = {}
+		for _, c in ipairs(cargos) do atSea[c.port] = (atSea[c.port] or 0) + 1 end
+		for cell, b in pairs(ctx.Buildings.all()) do
+			if b.kind == "port" and b.active and b.owner > 0 then
+				local nextAt = portTimers[cell]
+				if not nextAt then
+					portTimers[cell] = now + N.CargoInterval * (0.3 + ctx.random() * 0.7)
+				elseif now >= nextAt and (atSea[cell] or 0) < b.level * N.CargoPerPortLevel then
+					portTimers[cell] = now + N.CargoInterval
+					local path = tradeRoute(cell)
+					if path then
+						cargos[#cargos + 1] = { id = nextId, nation = b.owner, port = cell, path = path, progress = 1,
+							value = N.CargoValue + N.CargoValuePerLevel * (b.level - 1) }
+						nextId = nextId + 1
+					end
+				end
+			end
+		end
+	end
+	local k = 1
+	for i = 1, #cargos do
+		local c = cargos[i]
+		local keep = ctx.Nations.alive(c.nation)
+		if keep then
+			c.progress = c.progress + N.CargoSpeed * dt
+			local pos = c.path[math.min(#c.path, math.floor(c.progress))]
+			local px, py = Map:xy(pos)
+			-- an enemy defence boat in reach captures the cargo
+			for _, b in ipairs(boats) do
+				if b.nation ~= c.nation and ctx.Diplomacy.relation(b.nation, c.nation) == "war" then
+					local r = boatRange(b)
+					if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r * r then
+						local captor = ctx.Nations.get(b.nation)
+						local prize = math.floor(c.value * N.CargoCaptureFactor)
+						if captor then captor.gold = captor.gold + prize end
+						ctx.notify(b.nation, "💰 Navio de carga capturado: +" .. prize .. " de ouro.", "good")
+						ctx.notify(c.nation, "Um navio de carga seu foi capturado.", "bad")
+						keep = false
+						break
+					end
+				end
+			end
+			if keep and c.progress >= #c.path then
+				local n = ctx.Nations.get(c.nation)
+				local port = ctx.Buildings.at(c.port)
+				if n and port and port.owner == c.nation then n.gold = n.gold + c.value end
+				keep = false
+			end
+		end
+		if keep then
+			cargos[k] = c
+			k = k + 1
+		end
+	end
+	for i = k, #cargos do cargos[i] = nil end
+end
+
+-- Cargo rows for clients: { id, nation, cell }
+function NavalService.cargoView()
+	local out = {}
+	for _, c in ipairs(cargos) do
+		out[#out + 1] = { c.id, c.nation, c.path[math.min(#c.path, math.floor(c.progress))] }
+	end
+	return out
 end
 
 local function land(f)
@@ -336,11 +510,15 @@ local function land(f)
 	end
 	local cost, loss = ctx.Combat.cellCost(f.nation, f.target, f.troops, nil)
 	cost = cost * C.LandingCostFactor
+	if owner > 0 and not f.air then
+		local battery = ctx.Buildings.covered(f.target, "antinaval", owner, "landing")
+		if battery then cost = cost * battery end
+	end
 	if f.troops >= cost then
 		if owner > 0 then
 			local d = ctx.Nations.get(owner)
 			d.troops = math.max(0, d.troops - loss)
-			ctx.notify(owner, n.name .. " desembarcou no seu litoral!", "war")
+			ctx.notify(owner, n.name .. (f.air and " lançou paraquedistas no seu território!" or " desembarcou no seu litoral!"), "war")
 		end
 		Territory.setOwner(f.target, f.nation)
 		local remaining = math.floor(f.troops - cost)
@@ -368,11 +546,15 @@ function NavalService.tick(dt)
 		local n = ctx.Nations.get(f.nation)
 		local keep = n ~= nil and n.alive
 		if keep then
-			f.progress = f.progress + N.Speed * dt
+			f.progress = f.progress + (f.speed or N.Speed) * dt
 			if f.troops < 1 then
 				ctx.notify(f.nation, "Sua frota foi afundada.", "bad")
 				keep = false
 			elseif f.progress >= #f.path then
+				if f.air and ctx.Strategic.intercepts(f.nation, f.target, true) then
+					f.troops = f.troops * (1 - N.AirliftInterceptLoss)
+					ctx.notify(f.nation, "A antiaérea inimiga atingiu sua ponte aérea.", "bad")
+				end
 				land(f)
 				keep = false
 			end
@@ -389,6 +571,7 @@ function NavalService.tick(dt)
 		if ctx.Nations.alive(b.nation) then moveBoat(b, dt) end
 	end
 	boatCombat(dt)
+	cargoTick(dt)
 end
 
 -- Boat rows for clients: { id, nation, x, y, health, patrolCell, level }
@@ -411,7 +594,7 @@ end
 function NavalService.snapshot()
 	local fl, ws = {}, {}
 	for _, f in ipairs(fleets) do
-		fl[#fl + 1] = { f.id, f.nation, math.floor(f.troops), f.path, Config.Naval.Speed, f.target, f.progress }
+		fl[#fl + 1] = { f.id, f.nation, math.floor(f.troops), f.path, f.speed or Config.Naval.Speed, f.target, f.progress, f.air == true }
 	end
 	return fl, NavalService.boatView()
 end

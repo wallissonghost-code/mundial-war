@@ -249,6 +249,7 @@ M.Instance = Instance
 
 ---------------------------------------------------------------------------------- services
 function M.reset()
+	M.warnings = nil
 	M.created = 0
 	M.queue = {}             -- task.delay / spawn queue: { at, co or fn, args }
 	M.clock = 0
@@ -443,7 +444,7 @@ function M.env(scriptInstance)
 		game = M.game, workspace = M.workspace, script = scriptInstance,
 		Instance = Instance, Enum = Enum, Vector2 = Vector2, Vector3 = Vector3, UDim = UDim, UDim2 = UDim2,
 		Color3 = Color3, CFrame = CFrame, TweenInfo = TweenInfo, Content = Content, buffer = buffer, task = task,
-		warn = function(...) M.warnings = (M.warnings or 0) + 1 end,
+		warn = function(...) M.warnings = (M.warnings or 0) + 1 if M.warnings <= 3 then print("  warn:", ...) end end,
 		typeof = function(v)
 			if type(v) == "table" and getmetatable(v) == InstanceMT then return "Instance" end
 			if type(v) == "table" and v.__type then return v.__type end

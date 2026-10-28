@@ -31,6 +31,10 @@ function CombatService.cellCost(attackerId, cell, orderTroops, front)
 		local Buildings = ctx.Buildings
 		local bunker = Buildings.covered(cell, "bunker", target, "defense")
 		if bunker then cost = cost * bunker end
+		local wall = Buildings.covered(cell, "wall", target, "defense")
+		if wall then cost = cost * wall end
+		local shelter = Buildings.covered(cell, "trench", target, "shelter", true)
+		if shelter then defenderLoss = defenderLoss * shelter end
 		local mg = Buildings.covered(cell, "machinegun", target, "maxFactor")
 		if mg then
 			cost = cost * (1 + math.min(mg - 1, (orderTroops or 0) / B.machinegun.massDefense))
@@ -62,6 +66,10 @@ function CombatService.tick(dt)
 			local attrition = doTower and ctx.Buildings.covered(order.front, "tower", order.target, "attrition")
 			if attrition then
 				order.troops = order.troops * (1 - attrition * pulseClock)
+			end
+			local trench = doTower and ctx.Buildings.covered(order.front, "trench", order.target, "attrition")
+			if trench then
+				order.troops = order.troops * (1 - trench * pulseClock)
 			end
 			if doArtillery then
 				-- the defender's artillery, or an ally of the defender, shells the front

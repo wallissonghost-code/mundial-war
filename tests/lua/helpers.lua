@@ -54,7 +54,16 @@ end
 
 function H.newWorld(opts)
 	opts = opts or {}
-	local Config = opts.Config or H.Config
+	-- tests skip the mode vote unless they ask for it
+	local Config = opts.Config or H.configWith({ Match = { VoteSeconds = opts.vote or 0 } })
+	if opts.Config and not opts.vote then
+		Config = {}
+		for k, v in pairs(opts.Config) do Config[k] = v end
+		local match = {}
+		for k, v in pairs(opts.Config.Match) do match[k] = v end
+		match.VoteSeconds = 0
+		Config.Match = match
+	end
 	local services = {}
 	for _, name in ipairs({ "Territory", "Nations", "Economy", "Combat", "Buildings", "Expansion", "Naval",
 		"Strategic", "Diplomacy", "Bots", "Match", "Commands" }) do
@@ -69,6 +78,7 @@ function H.newWorld(opts)
 	math.randomseed(seed)
 	local mapData = opts.mapData or H.realMapData()
 	local world = World.new({
+		mode = opts.mode,
 		Config = Config, Palette = H.Palette, Protocol = H.Protocol, MapGrid = H.MapGrid, BuildingStats = H.BuildingStats,
 		MapData = mapData, Services = services, random = math.random,
 	})

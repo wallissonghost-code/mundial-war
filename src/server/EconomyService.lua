@@ -41,6 +41,11 @@ function EconomyService.tick(dt)
 				n.troops = math.min(maxTroops, n.troops + rate * dt)
 			end
 			n.gold = n.gold + n.goldRate * dt
+			if ctx.mode == "extreme" then
+				local O = ctx.Config.Oil
+				n.oilRate = O.Base + n.land * O.PerCell + ctx.Buildings.totals(n.id).oil
+				n.oil = (n.oil or 0) + n.oilRate * dt
+			end
 		end
 	end
 end

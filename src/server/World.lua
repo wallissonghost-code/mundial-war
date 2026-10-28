@@ -18,6 +18,7 @@ function World.new(deps)
 		random = deps.random or math.random,
 		outbox = {},
 		fullResync = false,
+		mode = deps.mode,
 	}
 	self.time = 0
 	ctx.now = function() return self.time end
@@ -136,6 +137,8 @@ function World:initPayload(userId)
 		relations = ctx.Diplomacy.snapshot(),
 		fleets = fleets, boats = boats,
 		missiles = ctx.Strategic.snapshot(),
+		fires = ctx.Strategic.fireView(),
+		cargos = ctx.Naval.cargoView(),
 		match = ctx.Match.publicView(),
 		you = you and you.alive and you.id or nil,
 		debug = ctx.Config.DEBUG_MODE,
@@ -170,6 +173,8 @@ function World:ordersPayload()
 		orders = ctx.Expansion.publicView(),
 		fleets = ctx.Naval.publicView(),
 		boats = ctx.Naval.boatView(),
+		cargos = ctx.Naval.cargoView(),
+		fires = ctx.Strategic.fireView(),
 	}
 	if ctx.Config.DEBUG_MODE then payload.bots = ctx.Bots.debugView() end
 	return payload
@@ -194,6 +199,7 @@ function World:privatePayload(userId)
 	return {
 		k = "me", id = n.id, troops = math.floor(n.troops), max = math.floor(n.maxTroops),
 		rate = n.troopRate, gold = math.floor(n.gold), goldRate = n.goldRate, land = n.land,
+		oil = math.floor(n.oil or 0), oilRate = n.oilRate or 0, mode = ctx.mode,
 		share = n.land / ctx.Map.landCount, costs = costs, cooldowns = cooldowns,
 		requests = ctx.Diplomacy.pendingFor(n.id),
 	}

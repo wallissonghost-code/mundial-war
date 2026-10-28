@@ -84,30 +84,70 @@ function NationService.canRespawn(userId)
 end
 
 -- Creates a nation with its capital and a small starting disc of neutral land.
+-- Creates a nation with its capital and starting land: a small disc of neutral land, or
+-- (Conquista Extrema) a whole country passed as info.cells with its own troops/gold/oil.
 function NationService.create(kind, name, cell, info)
 	local Config = ctx.Config
-	local ok, why = NationService.canSpawnAt(cell)
-	if not ok then return nil, why end
+	info = info or {}
+	if not info.cells then
+		local ok, why = NationService.canSpawnAt(cell)
+		if not ok then return nil, why end
+	end
 	local id = nextId
 	nextId = nextId + 1
-	local troops = kind == "player" and Config.Spawn.PlayerStartTroops
-		or kind == "bot" and Config.Spawn.BotStartTroops or Config.Spawn.TribeStartTroops
+	local troops = info.troops or (kind == "player" and Config.Spawn.PlayerStartTroops
+		or kind == "bot" and Config.Spawn.BotStartTroops or Config.Spawn.TribeStartTroops)
 	local n = {
-		id = id, kind = kind, name = name, userId = info and info.userId or nil,
-		country = info and info.country or ctx.Map.country[cell],
-		troops = troops, gold = Config.Gold.StartGold, land = 0, capital = cell,
+		id = id, kind = kind, name = name, userId = info.userId,
+		country = info.country or ctx.Map.country[cell],
+		troops = troops, gold = info.gold or Config.Gold.StartGold, oil = info.oil or 0, land = 0, capital = cell,
 		labelCell = cell, labelSize = 1, alive = true, color = pickColor(cell),
 		built = {}, spawnedAt = ctx.now(), maxTroops = Config.Troops.BaseCapacity,
-		troopRate = 0, goldRate = 0, kills = 0,
+		troopRate = 0, goldRate = 0, oilRate = 0, kills = 0,
 	}
 	nations[id] = n
 	if n.userId then byUser[n.userId] = id end
 	ctx.Territory.register(id)
-	ctx.Map:disc(cell, Config.Spawn.StartRadius, function(i)
-		if ctx.Territory.ownerOf(i) == 0 then
-			ctx.Territory.setOwner(i, id)
+	if info.cells then
+		for _, i in ipairs(info.cells) do
+			if ctx.Territory.ownerOf(i) == 0 then ctx.Territory.setOwner(i, id) end
 		end
-	end)
+	else
+		ctx.Map:disc(cell, Config.Spawn.StartRadius, function(i)
+			if ctx.Territory.ownerOf(i) == 0 then
+				ctx.Territory.setOwner(i, id)
+			end
+		end)
+	end
+	ctx.emit(nil, { k = ctx.Protocol.Events.Nations, add = NationService.publicInfo(n) })
+	return n
+end
+
+-- Conquista Extrema: when a player leaves, the AI takes the country back instead of erasing it.
+function NationService.returnToAI(id)
+	local n = nations[id]
+	if not n or not n.alive or not n.userId then return end
+	byUser[n.userId] = nil
+	n.userId = nil
+	n.kind = "bot"
+	n.name = string.gsub(n.name, " %(.*%)$", "")
+	ctx.Bots.adopt(id)
+	ctx.emit(nil, { k = ctx.Protocol.Events.Nations, add = NationService.publicInfo(n) })
+end
+
+-- Conquista Extrema: a player takes command of the AI country that owns `cell`.
+function NationService.takeover(userId, displayName, cell)
+	local Map = ctx.Map
+	if not Map:valid(cell) or not Map.land[cell] then return nil, "Clique num país." end
+	local id = ctx.Territory.ownerOf(cell)
+	local n = nations[id]
+	if not n or not n.alive then return nil, "Esse lugar não pertence a nenhum país. Escolha um país colorido." end
+	if n.kind == "player" then return nil, n.name .. " já é governado por outro jogador." end
+	ctx.Bots.release(id)
+	n.kind = "player"
+	n.userId = userId
+	n.name = n.name .. " (" .. displayName .. ")"
+	byUser[userId] = id
 	ctx.emit(nil, { k = ctx.Protocol.Events.Nations, add = NationService.publicInfo(n) })
 	return n
 end
