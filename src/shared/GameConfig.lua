@@ -278,6 +278,10 @@ GameConfig.View = {
 	ConfirmRadius = 3,                 -- cells
 	ConfirmTimeout = 5,
 	LOD = { Regional = 1.6, Local = 4.0 }, -- zoom (multiples of the fit-to-screen zoom)
+	-- "frames" works in every experience. "image" is sharper and lighter but needs
+	-- "Enable Mesh / Image APIs" turned on (otherwise Roblox draws a pink/blue checkerboard).
+	-- Players can switch at any time with the 🗺 button.
+	MapRenderer = "frames",
 }
 
 return GameConfig

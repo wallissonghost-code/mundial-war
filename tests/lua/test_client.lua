@@ -89,7 +89,14 @@ do
 	ok(rawget(gui.MundialWar.ModeMenu, "_props").Visible == false, "menu closes after everyone voted")
 	local all = texts(gui)
 	ok(all:find("fundar sua nação"), "spawn banner shown")
-	ok(M.pixelWrites >= 1, "map painted through EditableImage")
+	run(1)
+	local rowFrames = #find(gui, function(c) return c.ClassName == "Frame" and c.Parent and c.Parent.Name == "TerritoryRows" end)
+	ok(rowFrames > 500, "compatible map drawn with frames by default (" .. rowFrames .. ")")
+	-- switch to the image map
+	for _, b in ipairs(find(gui, function(c) return c.ClassName == "TextButton" and rawget(c, "_props").Text == "🗺" end)) do b.Activated:Fire() end
+	run(0.5)
+	ok(M.pixelWrites >= 1, "map painted through EditableImage after switching")
+	ok(#find(gui, function(c) return c.Name == "TerritoryRows" end) == 0, "frame map removed after switching")
 	local labels = #find(gui, function(c) return c.ClassName == "TextLabel" end)
 	ok(labels > 20, "bot labels created (" .. labels .. ")")
 
@@ -195,12 +202,16 @@ end
 do
 	boot(false)
 	run(1)
-	ok(M.warnings == 1, "fallback warns once")
+	ok(M.warnings == nil, "compatible map needs no warning")
+	ok(M.game:GetService("ReplicatedStorage"):GetAttribute("MW_ImageApis") == false, "server detected image APIs off")
+	for _, b in ipairs(find(M.localPlayer.PlayerGui, function(c) return c.ClassName == "TextButton" and rawget(c, "_props").Text == "🗺" end)) do b.Activated:Fire() end
+	run(0.5)
+	ok(texts(M.localPlayer.PlayerGui):find("Mesh / Image APIs"), "explains why the image map is unavailable")
 	local rows = #find(M.localPlayer.PlayerGui, function(c) return c.ClassName == "Frame" and c.Parent and c.Parent.Name == "TerritoryRows" end)
 	run(2)
 	rows = #find(M.localPlayer.PlayerGui, function(c) return c.ClassName == "Frame" and c.Parent and c.Parent.Name == "TerritoryRows" end)
 	ok(rows > 1000, "fallback renderer draws rows (" .. rows .. " frames)")
-	print("PASS fallback renderer without EditableImage")
+	print(string.format("PASS compatible map without image APIs (%d frames)", rows))
 end
 
 do

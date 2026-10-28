@@ -37,6 +37,15 @@ local world = World.new({
 
 NetworkService.start(world)
 
+-- Tell clients whether image APIs are allowed here (the image map mode needs them).
+task.spawn(function()
+	local ok, probe = pcall(function()
+		return game:GetService("AssetService"):CreateEditableImage({ Size = Vector2.new(4, 4) })
+	end)
+	ReplicatedStorage:SetAttribute("MW_ImageApis", ok and probe ~= nil)
+	if ok and probe then pcall(function() probe:Destroy() end) end
+end)
+
 local failures = 0
 RunService.Heartbeat:Connect(function(dt)
 	dt = math.min(dt, 0.25)   -- a long server hitch must not fast-forward the whole match

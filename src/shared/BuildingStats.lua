@@ -51,7 +51,7 @@ function BuildingStats.lines(Config, kind, level)
 	elseif kind == "port" then
 		out[#out + 1] = "+" .. num(s("gold")) .. " ouro/s"
 		out[#out + 1] = "Até " .. num(s("boats")) .. " barcos de defesa"
-	elseif kind == "bunker" then
+	elseif kind == "bunker" or kind == "wall" then
 		out[#out + 1] = "Ataques custam ×" .. num(s("defense"))
 	elseif kind == "tower" then
 		out[#out + 1] = "Frentes inimigas perdem " .. pct(s("attrition")) .. "/s"
@@ -70,8 +70,6 @@ function BuildingStats.lines(Config, kind, level)
 		out[#out + 1] = "Recarga ×" .. num(s("cooldownFactor"))
 		if level >= 3 then out[#out + 1] = "Libera bomba de hidrogênio" end
 		if level >= 5 then out[#out + 1] = "Libera o Fim de Era" end
-	elseif kind == "wall" then
-		out[#out + 1] = "Ataques custam ×" .. num(s("defense"))
 	elseif kind == "trench" then
 		out[#out + 1] = "Frentes inimigas perdem " .. pct(s("attrition")) .. "/s"
 		out[#out + 1] = "Você perde ×" .. num(s("shelter")) .. " tropas ao ceder terreno"

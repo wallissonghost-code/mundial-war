@@ -67,7 +67,26 @@ world.BackgroundTransparency = 1
 world.Parent = viewport
 
 local camera = CameraController.new(viewport, world, Map, Config)
-local renderer = MapRenderer.new(state, world)
+-- Map drawing mode: GameConfig.View.MapRenderer, never "image" when the server found the
+-- image APIs disabled; the 🗺 button switches for this session.
+local function preferredMapMode()
+	if ReplicatedStorage:GetAttribute("MW_ImageApis") == false then return "frames" end
+	return Config.View.MapRenderer
+end
+local renderer = MapRenderer.new(state, world, { frames = preferredMapMode() ~= "image" })
+local function switchMapMode()
+	local wantImage = renderer:mode() ~= "image"
+	if wantImage and ReplicatedStorage:GetAttribute("MW_ImageApis") == false then
+		return false, "O modo imagem precisa de 'Enable Mesh / Image APIs' ativado nas configurações do jogo."
+	end
+	renderer:dispose()
+	renderer = MapRenderer.new(state, world, { frames = not wantImage })
+	renderer.fullDirty = true
+	if wantImage and renderer:mode() ~= "image" then
+		return false, "O modo imagem não está disponível aqui; mantendo o mapa compatível."
+	end
+	return true, wantImage and "Mapa em modo imagem (mais leve). Se aparecer xadrez rosa e azul, toque em 🗺 de novo." or "Mapa em modo compatível."
+end
 local overlay = OverlayRenderer.new(state, camera, world)
 local debugOverlay = nil
 
@@ -329,6 +348,9 @@ hud = HUD.new(state, gui, {
 			setMode(mode ~= "weapon" and "weapon" or nil)
 		elseif name == "ranking" then hud:toggleRanking()
 		elseif name == "fit" then camera:fit()
+		elseif name == "mapmode" then
+			local ok, msg = switchMapMode()
+			hud:toast(msg, ok and "good" or "bad")
 		elseif name == "help" then hud:showCenter("Mundial War", helpText, true) end
 	end,
 	onBuild = function(kind)

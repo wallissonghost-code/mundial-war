@@ -1,6 +1,9 @@
--- Mundial War · paints the territory map. One pixel per cell in a single EditableImage
--- (one draw call, unaffected by graphics quality). Falls back to pooled row Frames when
--- EditableImage is unavailable (e.g. "Enable Mesh / Image APIs" not turned on).
+-- Mundial War · paints the territory map.
+-- "image" mode: one pixel per cell in a single EditableImage (one draw call). Needs
+--   "Enable Mesh / Image APIs" in the experience settings; without it Roblox shows a
+--   pink/blue checkerboard instead of the picture.
+-- "frames" mode: pooled Frames, one per run of equal colour in a row, water left to the
+--   ocean-coloured background. Works everywhere.
 local AssetService = game:GetService("AssetService")
 local RunService = game:GetService("RunService")
 
@@ -10,7 +13,8 @@ MapRenderer.__index = MapRenderer
 local BORDER_SHADE = 0.58
 local COUNTRY_SHADE = 0.9
 
-function MapRenderer.new(state, parent)
+function MapRenderer.new(state, parent, opts)
+	opts = opts or {}
 	local self = setmetatable({}, MapRenderer)
 	self.state = state
 	self.Map = state.Map
@@ -29,9 +33,12 @@ function MapRenderer.new(state, parent)
 	image.Parent = parent
 	self.image = image
 
-	local ok, editable = pcall(function()
-		return AssetService:CreateEditableImage({ Size = Vector2.new(W, H) })
-	end)
+	local ok, editable = false, nil
+	if not opts.frames then
+		ok, editable = pcall(function()
+			return AssetService:CreateEditableImage({ Size = Vector2.new(W, H) })
+		end)
+	end
 	if ok and editable then
 		local bound = pcall(function()
 			image.ImageContent = Content.fromObject(editable)
@@ -42,7 +49,9 @@ function MapRenderer.new(state, parent)
 		end
 	end
 	if not self.editable then
-		warn("[MundialWar] EditableImage indisponível; usando renderizador de Frames. Ative 'Enable Mesh / Image APIs' nas configurações da experiência para o modo rápido.")
+		if not opts.frames then
+			warn("[MundialWar] EditableImage indisponível; usando renderizador de Frames. Ative 'Enable Mesh / Image APIs' nas configurações da experiência para o modo rápido.")
+		end
 		image.Visible = false
 		self.rowsFrame = Instance.new("Frame")
 		self.rowsFrame.Name = "TerritoryRows"
@@ -56,20 +65,37 @@ function MapRenderer.new(state, parent)
 	self:recolor()
 
 	state:on("init", function()
+		if self.disposed then return end
 		self:recolor()
 		self.fullDirty = true
 	end)
 	state:on("nationList", function()
+		if self.disposed then return end
 		-- colours only; the cells of a new or removed nation arrive as territory deltas
 		self:recolor()
 	end)
 	state:on("owners", function(cells)
+		if self.disposed then return end
 		for _, i in ipairs(cells) do self:markAround(i) end
 	end)
 	self.connection = RunService.RenderStepped:Connect(function()
 		self:flush()
 	end)
 	return self
+end
+
+function MapRenderer:mode()
+	return self.editable and "image" or "frames"
+end
+
+-- Removes everything this renderer created (used when the player switches map mode).
+function MapRenderer:dispose()
+	self.disposed = true
+	if self.connection then self.connection:Disconnect() end
+	if self.image then self.image:Destroy() end
+	if self.rowsFrame then self.rowsFrame:Destroy() end
+	if self.editable then pcall(function() self.editable:Destroy() end) end
+	self.editable, self.rowPools, self.dirtyRows = nil, nil, nil
 end
 
 -- Pre-computes fill/border/country-line colours for every nation id.
@@ -137,6 +163,7 @@ function MapRenderer:cellColor(i)
 			end
 		end
 	end
+	if self.plain then otherCountry = false end
 	if o == 0 then
 		if otherCountry then return c.line end
 		return self.rowNeutral[(i - 1 - x) / W]
@@ -225,29 +252,40 @@ function MapRenderer:paintRow(y)
 	local W, H = Map.W, Map.H
 	local pool = self.rowPools[y]
 	if not pool then pool = {} self.rowPools[y] = pool end
+	local owner = self.state.owner
 	local used, x = 0, 0
+	self.plain = true -- no faint country lines here: fewer frames
 	while x < W do
-		local c = self:cellColor(y * W + x + 1)
+		local i = y * W + x + 1
 		local stop = x + 1
-		while stop < W do
-			local d = self:cellColor(y * W + stop + 1)
-			if d[1] ~= c[1] or d[2] ~= c[2] or d[3] ~= c[3] then break end
-			stop = stop + 1
+		if owner[i] == -1 then
+			-- water: the ocean-coloured background already shows it
+			while stop < W and owner[y * W + stop + 1] == -1 do stop = stop + 1 end
+		else
+			local c = self:cellColor(i)
+			while stop < W do
+				local j = y * W + stop + 1
+				if owner[j] == -1 then break end
+				local d = self:cellColor(j)
+				if d[1] ~= c[1] or d[2] ~= c[2] or d[3] ~= c[3] then break end
+				stop = stop + 1
+			end
+			used = used + 1
+			local f = pool[used]
+			if not f then
+				f = Instance.new("Frame")
+				f.BorderSizePixel = 0
+				f.Parent = self.rowsFrame
+				pool[used] = f
+			end
+			f.Position = UDim2.fromScale(x / W, y / H)
+			f.Size = UDim2.new((stop - x) / W, 1, 1 / H, 1)
+			f.BackgroundColor3 = Color3.fromRGB(c[1], c[2], c[3])
+			f.Visible = true
 		end
-		used = used + 1
-		local f = pool[used]
-		if not f then
-			f = Instance.new("Frame")
-			f.BorderSizePixel = 0
-			f.Parent = self.rowsFrame
-			pool[used] = f
-		end
-		f.Position = UDim2.fromScale(x / W, y / H)
-		f.Size = UDim2.new((stop - x) / W, 1, 1 / H, 1)
-		f.BackgroundColor3 = Color3.fromRGB(c[1], c[2], c[3])
-		f.Visible = true
 		x = stop
 	end
+	self.plain = false
 	for k = used + 1, #pool do pool[k].Visible = false end
 end
 
@@ -259,12 +297,13 @@ function MapRenderer:flush()
 		self:paintDirty()
 	end
 	if self.dirtyRows then
-		local count = 0
+		-- a full repaint is spread over frames; more rows per frame while it is large
+		local count, budget = 0, next(self.dirtyRows) and 24 or 0
 		for y in pairs(self.dirtyRows) do
 			self.dirtyRows[y] = nil
 			self:paintRow(y)
 			count = count + 1
-			if count >= 12 then break end
+			if count >= budget then break end
 		end
 	end
 end

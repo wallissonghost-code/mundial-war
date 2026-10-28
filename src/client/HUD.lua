@@ -89,7 +89,7 @@ function HUD.new(state, gui, handlers)
 	self.tools = {}
 	local toolList = {
 		{ "build", "🏗", "Construir" }, { "weapons", "💣", "Bombas e ataques" },
-		{ "ranking", "🏆", "Ranking" }, { "fit", "🌍", "Ver o mundo" }, { "help", "?", "Ajuda" },
+		{ "ranking", "🏆", "Ranking" }, { "fit", "🌍", "Ver o mundo" }, { "mapmode", "🗺", "Trocar modo do mapa" }, { "help", "?", "Ajuda" },
 	}
 	for index, t in ipairs(toolList) do
 		local b = button(tools, t[2], { Size = UDim2.fromOffset(34, 30), LayoutOrder = index, TextSize = 16, ZIndex = 21 })
