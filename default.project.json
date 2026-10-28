@@ -2,22 +2,31 @@
   "name": "MundialWar",
   "tree": {
     "$className": "DataModel",
+    "ReplicatedStorage": {
+      "MundialWarShared": {
+        "$path": "src/shared"
+      }
+    },
     "ServerScriptService": {
       "MundialWar": {
-        "$path": "src/server.server.lua"
+        "$path": "src/server"
       }
     },
     "StarterPlayer": {
       "StarterPlayerScripts": {
         "MundialWar": {
-          "$path": "src/client.client.lua"
+          "$path": "src/client"
         }
       }
     },
     "Players": {
-      "$className": "Players",
       "$properties": {
         "CharacterAutoLoads": false
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "StreamingEnabled": false
       }
     }
   }
