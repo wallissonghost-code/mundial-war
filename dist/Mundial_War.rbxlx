@@ -137,7 +137,7 @@ GameConfig.Tick = {
 	TerritoryDelta = 0.2,              -- batched ownership updates to clients
 	PublicNations = 1.0,               -- troops/land/label for every nation
 	PublicOrders = 0.4,
-	Components = 2.0,                  -- label centroid + exclave detection
+	Components = 3.0,                  -- label centroid + exclave detection (only for nations that changed)
 	EnclaveFill = 3.0,
 }
 
@@ -195,6 +195,7 @@ GameConfig.Expansion = {
 	Jitter = 1.4,                      -- organic, non-grid edges
 	EnclaveMaxCells = 80,              -- enclosed neutral pockets up to this size are annexed for free
 	ReachSearchLimit = 40000,          -- cells searched to prove a land route from the click to our border
+	FrontSearchMargin = 30,            -- cells around the fan scanned each tick (performance)
 }
 
 GameConfig.Combat = {
@@ -347,7 +348,9 @@ GameConfig.Diplomacy = {
 GameConfig.Bots = {
 	Nations = 36,                      -- largest countries become AI nations at their real capitals
 	Tribes = 20,                       -- small, weak factions in other countries
-	ExtremeThinkInterval = 2.0,        -- Conquista Extrema has ~180 AI countries
+	ExtremeThinkInterval = 3.0,        -- Conquista Extrema has ~165 AI countries
+	BuildInterval = 8,                 -- seconds between a bot's building decisions
+	NavalSearchLimit = 30000,          -- water cells searched when a bot plans an invasion
 	ThinkInterval = 1.2,               -- each bot; ticks are staggered across bots
 	TribeThinkInterval = 3,
 	AttackWhenStronger = 1.3,          -- troop ratio before picking a fight
@@ -1549,11 +1552,12 @@ local function tryNaval(n, b)
 		local o = Territory.ownerOf(i)
 		if o ~= n.id and (o == 0 or (ctx.Diplomacy.canAttack(n.id, o) and ctx.Nations.get(o).troops &lt; n.troops * 0.5)) then
 			local d = Map:distance(i, ports[1].cell)
-			if d &lt; bestD then best, bestD = i, d end
+			-- nearby shores only: a short search, and a realistic invasion
+			if d &lt; bestD and d &lt; 120 then best, bestD = i, d end
 		end
 	end
 	if best then
-		local ok = ctx.Naval.launch(n.id, best, n.kind == "tribe" and 0.3 or 0.4)
+		local ok = ctx.Naval.launch(n.id, best, n.kind == "tribe" and 0.3 or 0.4, Config.Bots.NavalSearchLimit)
 		return ok
 	end
 	return false
@@ -1569,7 +1573,10 @@ local function think(b)
 	local attackedBy = #attacked &gt; 0 and attacked[1].nation or nil
 
 	-- building happens alongside any other state
-	if n.gold &gt; 0 and tryBuild(n, b, attackedBy) then b.state = S.Building end
+	if ctx.now() &gt;= (b.nextBuild or 0) then
+		b.nextBuild = ctx.now() + B.BuildInterval
+		if n.gold &gt; 0 and tryBuild(n, b, attackedBy) then b.state = S.Building end
+	end
 
 	if attackedBy and n.troops &lt; (ctx.Nations.get(attackedBy) or n).troops then
 		b.state = S.Defending
@@ -2154,6 +2161,7 @@ local DiplomacyService = {}
 
 local ctx
 local relations = {}      -- "a:b" -&gt; { kind = "ally" | "war", since }
+local matrix = {}         -- a -&gt; b -&gt; kind (fast lookups for the simulation's hot loops)
 local requests = {}       -- to -&gt; { from -&gt; expires }
 local brokeAt = {}        -- "a:b" -&gt; time alliance was cancelled
 
@@ -2167,13 +2175,22 @@ function DiplomacyService.init(context)
 end
 
 function DiplomacyService.reset()
-	relations, requests, brokeAt = {}, {}, {}
+	relations, requests, brokeAt, matrix = {}, {}, {}, {}
+end
+
+local function setRelation(a, b, value)
+	relations[key(a, b)] = value
+	local kind = value and value.kind or nil
+	matrix[a] = matrix[a] or {}
+	matrix[b] = matrix[b] or {}
+	matrix[a][b] = kind
+	matrix[b][a] = kind
 end
 
 function DiplomacyService.relation(a, b)
 	if a == b then return "self" end
-	local r = relations[key(a, b)]
-	return r and r.kind or "neutral"
+	local row = matrix[a]
+	return row and row[b] or "neutral"
 end
 
 function DiplomacyService.allied(a, b)
@@ -2199,7 +2216,7 @@ function DiplomacyService.declareWar(a, b)
 	local r = relations[key(a, b)]
 	if r and r.kind == "war" then return true, "Vocês já estão em guerra." end
 	if r and r.kind == "ally" then brokeAt[key(a, b)] = ctx.now() end
-	relations[key(a, b)] = { kind = "war", since = ctx.now() }
+	setRelation(a, b, { kind = "war", since = ctx.now() })
 	if requests[a] then requests[a][b] = nil end
 	if requests[b] then requests[b][a] = nil end
 	notifyPair(a, b)
@@ -2215,7 +2232,7 @@ function DiplomacyService.ensureWar(a, b)
 end
 
 local function makeAlliance(a, b)
-	relations[key(a, b)] = { kind = "ally", since = ctx.now() }
+	setRelation(a, b, { kind = "ally", since = ctx.now() })
 	if requests[a] then requests[a][b] = nil end
 	if requests[b] then requests[b][a] = nil end
 	-- allies stop fighting each other immediately; troops in the field go home
@@ -2266,7 +2283,7 @@ end
 
 function DiplomacyService.breakAlliance(a, b)
 	if not DiplomacyService.allied(a, b) then return false, "Vocês não são aliados." end
-	relations[key(a, b)] = nil
+	setRelation(a, b, nil)
 	brokeAt[key(a, b)] = ctx.now()
 	notifyPair(a, b)
 	ctx.notify(b, (ctx.Nations.get(a) or { name = "?" }).name .. " cancelou a aliança.", "war")
@@ -2276,7 +2293,8 @@ end
 function DiplomacyService.removeNation(id)
 	for k in pairs(relations) do
 		local a, b = string.match(k, "^(%d+):(%d+)$")
-		if tonumber(a) == id or tonumber(b) == id then relations[k] = nil end
+		a, b = tonumber(a), tonumber(b)
+		if a == id or b == id then setRelation(a, b, nil) end
 	end
 	requests[id] = nil
 	for _, list in pairs(requests) do list[id] = nil end
@@ -2583,7 +2601,13 @@ local function advance(o, dt)
 	end
 	if o.troops &lt; E.MinTroopsToSend * 0.5 then finish(o, true) return end
 
-	local _, count = Territory.frontier(o.nation, o.target, candidates)
+	-- look only near the fan first; fall back to the whole border when that area is used up
+	local sqTroops = math.sqrt(math.max(0, o.troops))
+	local reach = Map:distance(o.originCell, o.anchor) + E.FrontSearchMargin + sqTroops / 4
+	local _, count = Territory.frontierNear(o.nation, o.target, o.originCell, reach, candidates)
+	if count == 0 then
+		_, count = Territory.frontier(o.nation, o.target, candidates)
+	end
 	if count == 0 then finish(o, true) return end
 
 	-- Fan-shaped front: grow outward from where the order left our border (origin), inside a
@@ -3115,7 +3139,7 @@ end
 
 -- Breadth-first search over water from the target shore back to any of the nation's ports.
 -- Returns the water path ordered port -&gt; target, or nil.
-function NavalService.route(nid, targetCell)
+function NavalService.route(nid, targetCell, limit)
 	local ports = ctx.Buildings.ofKind(nid, "port")
 	if #ports == 0 then return nil, "Construa um porto no litoral primeiro." end
 	vstamp = vstamp + 1
@@ -3138,6 +3162,7 @@ function NavalService.route(nid, targetCell)
 	end
 	local scratch = {}
 	while head &lt;= #queue do
+		if limit and head &gt; limit then break end
 		local i = queue[head]
 		head = head + 1
 		if goal[i] then
@@ -3161,7 +3186,7 @@ function NavalService.route(nid, targetCell)
 	return nil, "Nenhuma rota marítima a partir dos seus portos."
 end
 
-function NavalService.launch(nid, cell, percent)
+function NavalService.launch(nid, cell, percent, searchLimit)
 	local N = Config.Naval
 	local n = ctx.Nations.get(nid)
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
@@ -3182,7 +3207,7 @@ function NavalService.launch(nid, cell, percent)
 	local troops = math.floor(n.troops * percent)
 	if troops &lt; N.MinTroops then return false, "A frota precisa de pelo menos " .. N.MinTroops .. " tropas." end
 	if n.gold &lt; N.TransportGold then return false, "Transporte custa " .. N.TransportGold .. " de ouro." end
-	local path, why = NavalService.route(nid, cell)
+	local path, why = NavalService.route(nid, cell, searchLimit)
 	if not path then return false, why end
 	n.gold = n.gold - N.TransportGold
 	n.troops = n.troops - troops
@@ -3352,70 +3377,83 @@ local function moveBoat(b, dt)
 end
 
 -- Boats fight enemy boats, wear down enemy transports and raid gold from enemy ports in reach.
+-- Boats fight enemy boats (every tick) and, once per second, wear down transports, raid
+-- enemy ports and take fire from anti-naval batteries. The slow checks run on a 1 s pulse
+-- against short lists (ports, batteries) instead of a spatial query per boat per tick.
+local slowPulse = 0
 local function boatCombat(dt)
 	local N = Config.Naval
+	local Diplomacy = ctx.Diplomacy
 	for _, b in ipairs(boats) do
 		local range = boatRange(b)
 		local r2 = range * range
 		local target, best = nil, math.huge
 		for _, o in ipairs(boats) do
-			if o.nation ~= b.nation and o.hp &gt; 0 and ctx.Diplomacy.relation(b.nation, o.nation) == "war" then
+			if o.nation ~= b.nation and o.hp &gt; 0 then
 				local d = (o.x - b.x) ^ 2 + (o.y - b.y) ^ 2
-				if d &lt;= r2 and d &lt; best then target, best = o, d end
+				if d &lt;= r2 and d &lt; best and Diplomacy.relation(b.nation, o.nation) == "war" then target, best = o, d end
 			end
 		end
 		if target then target.hp = target.hp - boatDamage(b) * dt end
-		for _, f in ipairs(fleets) do
-			if not f.air and f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
-				local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
-				if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r2 then
-					f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
+	end
+	slowPulse = slowPulse + dt
+	if slowPulse &gt;= 1 and #boats + #fleets &gt; 0 then
+		local step = slowPulse
+		slowPulse = 0
+		local ports, batteries = {}, {}
+		for _, bld in pairs(ctx.Buildings.all()) do
+			if bld.active then
+				if bld.kind == "port" then
+					local x, y = Map:xy(bld.cell)
+					ports[#ports + 1] = { owner = bld.owner, x = x + 0.5, y = y + 0.5 }
+				elseif bld.kind == "antinaval" then
+					local x, y = Map:xy(bld.cell)
+					local r = ctx.Buildings.stat(bld, "radius")
+					batteries[#batteries + 1] = { owner = bld.owner, x = x + 0.5, y = y + 0.5, r2 = r * r, damage = ctx.Buildings.stat(bld, "damage") }
 				end
 			end
 		end
-		local here = boatCell(b)
-		if here then
+		for _, b in ipairs(boats) do
+			local range = boatRange(b)
+			local r2 = range * range
+			for _, f in ipairs(fleets) do
+				if not f.air and f.nation ~= b.nation then
+					local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
+					if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r2 and Diplomacy.relation(b.nation, f.nation) == "war" then
+						f.troops = f.troops * (1 - N.BoatTransportDamage * step)
+					end
+				end
+			end
 			local owner = ctx.Nations.get(b.nation)
-			ctx.Buildings.near(here, range, function(p)
-				if p.kind == "port" and p.owner ~= b.nation and ctx.Diplomacy.relation(b.nation, p.owner) == "war" then
+			for _, p in ipairs(ports) do
+				if p.owner ~= b.nation and (p.x - b.x) ^ 2 + (p.y - b.y) ^ 2 &lt;= r2 and Diplomacy.relation(b.nation, p.owner) == "war" then
 					local victim = ctx.Nations.get(p.owner)
 					if victim and owner then
-						local take = math.min(victim.gold, N.BoatGoldSteal * dt)
+						local take = math.min(victim.gold, N.BoatGoldSteal * step)
 						victim.gold = victim.gold - take
 						owner.gold = owner.gold + take
 					end
 				end
-			end)
+			end
+			local dmg = 0
+			for _, a in ipairs(batteries) do
+				if a.owner ~= b.nation and (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 &lt;= a.r2 and Diplomacy.relation(a.owner, b.nation) == "war" then
+					if a.damage &gt; dmg then dmg = a.damage end
+				end
+			end
+			if dmg &gt; 0 then b.hp = b.hp - dmg * step end
 		end
-	end
-	-- coastal anti-naval batteries (Conquista Extrema)
-	if ctx.mode == "extreme" then
-		for _, b in ipairs(boats) do
-			local here = boatCell(b)
-			if here then
-				local dmg = nil
-				ctx.Buildings.near(here, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
-					if p.kind == "antinaval" and p.active and p.owner ~= b.nation and ctx.Diplomacy.relation(p.owner, b.nation) == "war" then
-						local r = ctx.Buildings.stat(p, "radius")
-						local px, py = Map:xy(p.cell)
-						if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r * r then
-							dmg = math.max(dmg or 0, ctx.Buildings.stat(p, "damage"))
+		if #batteries &gt; 0 then
+			for _, f in ipairs(fleets) do
+				if not f.air then
+					local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
+					for _, a in ipairs(batteries) do
+						if a.owner ~= f.nation and (a.x - px - 0.5) ^ 2 + (a.y - py - 0.5) ^ 2 &lt;= a.r2 and Diplomacy.relation(a.owner, f.nation) == "war" then
+							f.troops = f.troops * (1 - N.BoatTransportDamage * step)
+							break
 						end
 					end
-				end)
-				if dmg then b.hp = b.hp - dmg * dt end
-			end
-		end
-		for _, f in ipairs(fleets) do
-			if not f.air then
-				local pos = f.path[math.min(#f.path, math.floor(f.progress))]
-				ctx.Buildings.near(pos, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
-					if p.kind == "antinaval" and p.active and p.owner ~= f.nation and ctx.Diplomacy.relation(p.owner, f.nation) == "war"
-						and Map:distance(p.cell, pos) &lt;= ctx.Buildings.stat(p, "radius") then
-						f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
-						return true
-					end
-				end)
+				end
 			end
 		end
 	end
@@ -3471,6 +3509,8 @@ local function tradeRoute(portCell)
 	return path
 end
 
+local capturePulse = 0
+local NO_BOATS = {}
 local function cargoTick(dt)
 	local N = Config.Naval
 	cargoClock = cargoClock + dt
@@ -3497,6 +3537,9 @@ local function cargoTick(dt)
 		end
 	end
 	local k = 1
+	capturePulse = capturePulse + dt
+	local checkCaptures = capturePulse &gt;= 0.5 and #boats &gt; 0
+	if capturePulse &gt;= 0.5 then capturePulse = 0 end
 	for i = 1, #cargos do
 		local c = cargos[i]
 		local keep = ctx.Nations.alive(c.nation)
@@ -3504,8 +3547,8 @@ local function cargoTick(dt)
 			c.progress = c.progress + N.CargoSpeed * dt
 			local pos = c.path[math.min(#c.path, math.floor(c.progress))]
 			local px, py = Map:xy(pos)
-			-- an enemy defence boat in reach captures the cargo
-			for _, b in ipairs(boats) do
+			-- an enemy defence boat in reach captures the cargo (checked twice a second)
+			for _, b in ipairs(checkCaptures and boats or NO_BOATS) do
 				if b.nation ~= c.nation and ctx.Diplomacy.relation(b.nation, c.nation) == "war" then
 					local r = boatRange(b)
 					if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 &lt;= r * r then
@@ -4098,6 +4141,9 @@ local recentClaims = {}       -- nid -&gt; list of recently claimed cells (encla
 local seen, stamp = {}, 0     -- reusable visit marks
 local compMark, compStamp = {}, 0 -- component id per owned cell (0 = not analysed yet)
 local nb, nbOuter = {}, {}
+local borderChunks = {}       -- nid -&gt; chunk key -&gt; { cell = true } (spatial index of border cells)
+local dirty = {}              -- nid -&gt; true when its territory changed since the last analysis
+local CHUNK = 16
 
 TerritoryService.owner = owner
 
@@ -4114,7 +4160,7 @@ function TerritoryService.reset()
 		seen[i] = 0
 	end
 	stamp, compStamp = 0, 0
-	ownedBy, border, recentClaims = {}, {}, {}
+	ownedBy, border, recentClaims, borderChunks, dirty = {}, {}, {}, {}, {}
 	changes, changeCount = {}, 0
 end
 
@@ -4122,10 +4168,35 @@ function TerritoryService.register(nid)
 	ownedBy[nid] = {}
 	border[nid] = {}
 	recentClaims[nid] = {}
+	borderChunks[nid] = {}
+	dirty[nid] = true
 end
 
 function TerritoryService.unregister(nid)
-	ownedBy[nid], border[nid], recentClaims[nid] = nil, nil, nil
+	ownedBy[nid], border[nid], recentClaims[nid], borderChunks[nid], dirty[nid] = nil, nil, nil, nil, nil
+end
+
+local function chunkOf(i)
+	local x = (i - 1) % Map.W
+	local y = (i - 1 - x) / Map.W
+	return math.floor(x / CHUNK) * 1000 + math.floor(y / CHUNK)
+end
+
+local function setBorder(id, i, on)
+	local set = border[id]
+	if not set or (set[i] == true) == on then return end
+	local chunks = borderChunks[id]
+	local key = chunkOf(i)
+	if on then
+		set[i] = true
+		local c = chunks[key]
+		if not c then c = {} chunks[key] = c end
+		c[i] = true
+	else
+		set[i] = nil
+		local c = chunks[key]
+		if c then c[i] = nil end
+	end
 end
 
 function TerritoryService.ownerOf(i)
@@ -4143,17 +4214,16 @@ end
 local function refreshBorder(i)
 	local id = owner[i]
 	if id &lt;= 0 then return end
-	local set = border[id]
-	if not set then return end
+	if not border[id] then return end
 	local n = Map:neighbors(i, nb)
 	for k = 1, n do
 		local o = owner[nb[k]]
 		if o ~= -1 and o ~= id then
-			set[i] = true
+			setBorder(id, i, true)
 			return
 		end
 	end
-	set[i] = nil
+	setBorder(id, i, false)
 end
 
 -- The single place where ownership changes. Water is rejected here, so no code path
@@ -4167,7 +4237,8 @@ function TerritoryService.setOwner(i, nid)
 	if old &gt; 0 then
 		local set = ownedBy[old]
 		if set then set[i] = nil end
-		if border[old] then border[old][i] = nil end
+		setBorder(old, i, false)
+		dirty[old] = true
 		local n = nations.get(old)
 		if n then
 			n.land = n.land - 1
@@ -4177,6 +4248,7 @@ function TerritoryService.setOwner(i, nid)
 	owner[i] = nid
 	if nid &gt; 0 then
 		ownedBy[nid][i] = true
+		dirty[nid] = true
 		local n = nations.get(nid)
 		n.land = n.land + 1
 		local recent = recentClaims[nid]
@@ -4210,6 +4282,44 @@ function TerritoryService.frontier(nid, target, out)
 				seen[j] = stamp
 				count = count + 1
 				out[count] = j
+			end
+		end
+	end
+	for k = count + 1, #out do out[k] = nil end
+	return out, count
+end
+
+-- Same as frontier, but only from border cells within `radius` of `center` (chunk index).
+-- Expansion uses it so a huge empire does not rescan its whole border every tick.
+function TerritoryService.frontierNear(nid, target, center, radius, out)
+	out = out or {}
+	local count = 0
+	stamp = stamp + 1
+	local chunks = borderChunks[nid]
+	if not chunks then return out, 0 end
+	local W = Map.W
+	local cx = (center - 1) % W
+	local cy = (center - 1 - cx) / W
+	local r2 = radius * radius
+	for kx = math.floor((cx - radius) / CHUNK), math.floor((cx + radius) / CHUNK) do
+		for ky = math.floor((cy - radius) / CHUNK), math.floor((cy + radius) / CHUNK) do
+			local set = chunks[kx * 1000 + ky]
+			if set then
+				for i in pairs(set) do
+					local x = (i - 1) % W
+					local y = (i - 1 - x) / W
+					if (x - cx) * (x - cx) + (y - cy) * (y - cy) &lt;= r2 then
+						local n = Map:neighbors(i, nb)
+						for k = 1, n do
+							local j = nb[k]
+							if owner[j] == target and seen[j] ~= stamp then
+								seen[j] = stamp
+								count = count + 1
+								out[count] = j
+							end
+						end
+					end
+				end
 			end
 		end
 	end
@@ -4340,6 +4450,9 @@ function TerritoryService.analyze(nid)
 	local n = ctx.Nations.get(nid)
 	local set = ownedBy[nid]
 	if not n or not set then return end
+	-- unchanged territory keeps its label and exclave map
+	if not dirty[nid] and not n.capitalLost then return end
+	dirty[nid] = nil
 	local W = Map.W
 	local bestSize, bestCell, capComp = 0, nil, nil
 	local largestComp = nil
@@ -6637,9 +6750,12 @@ function OverlayRenderer:updateOrders()
 		local s = math.clamp(cam.scale * 1.8, 14, 26)
 		local visible = lod &gt;= 1 or mine
 		-- glide between the 0.4 s server updates
-		local info = TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear)
-		TweenService:Create(item.icon, info, { Position = self:posXY(x, y) }):Play()
-		TweenService:Create(item.bar, info, { Position = self:posXY(x, y + 0.9) }):Play()
+		if item.x ~= x or item.y ~= y then
+			item.x, item.y = x, y
+			local info = TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear)
+			TweenService:Create(item.icon, info, { Position = self:posXY(x, y) }):Play()
+			TweenService:Create(item.bar, info, { Position = self:posXY(x, y + 0.9) }):Play()
+		end
 		item.icon.Size = UDim2.fromOffset(s, s)
 		item.icon.Visible = visible
 		item.bar.Size = UDim2.fromOffset(s, 3)
@@ -6682,7 +6798,10 @@ function OverlayRenderer:updateOrders()
 		local size = math.clamp(cam.scale * 1.3, 10, 18)
 		item.icon.Size = UDim2.fromOffset(size, size)
 		item.icon.Visible = lod &gt;= 1 or nation == state.you
-		TweenService:Create(item.icon, TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear), { Position = self:pos(cell) }):Play()
+		if item.cell ~= cell then
+			item.cell = cell
+			TweenService:Create(item.icon, TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear), { Position = self:pos(cell) }):Play()
+		end
 	end
 	release(self.cargoItems)
 end

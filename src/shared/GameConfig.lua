@@ -40,7 +40,7 @@ GameConfig.Tick = {
 	TerritoryDelta = 0.2,              -- batched ownership updates to clients
 	PublicNations = 1.0,               -- troops/land/label for every nation
 	PublicOrders = 0.4,
-	Components = 2.0,                  -- label centroid + exclave detection
+	Components = 3.0,                  -- label centroid + exclave detection (only for nations that changed)
 	EnclaveFill = 3.0,
 }
 
@@ -98,6 +98,7 @@ GameConfig.Expansion = {
 	Jitter = 1.4,                      -- organic, non-grid edges
 	EnclaveMaxCells = 80,              -- enclosed neutral pockets up to this size are annexed for free
 	ReachSearchLimit = 40000,          -- cells searched to prove a land route from the click to our border
+	FrontSearchMargin = 30,            -- cells around the fan scanned each tick (performance)
 }
 
 GameConfig.Combat = {
@@ -250,7 +251,9 @@ GameConfig.Diplomacy = {
 GameConfig.Bots = {
 	Nations = 36,                      -- largest countries become AI nations at their real capitals
 	Tribes = 20,                       -- small, weak factions in other countries
-	ExtremeThinkInterval = 2.0,        -- Conquista Extrema has ~180 AI countries
+	ExtremeThinkInterval = 3.0,        -- Conquista Extrema has ~165 AI countries
+	BuildInterval = 8,                 -- seconds between a bot's building decisions
+	NavalSearchLimit = 30000,          -- water cells searched when a bot plans an invasion
 	ThinkInterval = 1.2,               -- each bot; ticks are staggered across bots
 	TribeThinkInterval = 3,
 	AttackWhenStronger = 1.3,          -- troop ratio before picking a fight

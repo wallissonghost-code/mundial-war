@@ -298,9 +298,12 @@ function OverlayRenderer:updateOrders()
 		local s = math.clamp(cam.scale * 1.8, 14, 26)
 		local visible = lod >= 1 or mine
 		-- glide between the 0.4 s server updates
-		local info = TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear)
-		TweenService:Create(item.icon, info, { Position = self:posXY(x, y) }):Play()
-		TweenService:Create(item.bar, info, { Position = self:posXY(x, y + 0.9) }):Play()
+		if item.x ~= x or item.y ~= y then
+			item.x, item.y = x, y
+			local info = TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear)
+			TweenService:Create(item.icon, info, { Position = self:posXY(x, y) }):Play()
+			TweenService:Create(item.bar, info, { Position = self:posXY(x, y + 0.9) }):Play()
+		end
 		item.icon.Size = UDim2.fromOffset(s, s)
 		item.icon.Visible = visible
 		item.bar.Size = UDim2.fromOffset(s, 3)
@@ -343,7 +346,10 @@ function OverlayRenderer:updateOrders()
 		local size = math.clamp(cam.scale * 1.3, 10, 18)
 		item.icon.Size = UDim2.fromOffset(size, size)
 		item.icon.Visible = lod >= 1 or nation == state.you
-		TweenService:Create(item.icon, TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear), { Position = self:pos(cell) }):Play()
+		if item.cell ~= cell then
+			item.cell = cell
+			TweenService:Create(item.icon, TweenInfo.new(self.Config.Tick.PublicOrders, Enum.EasingStyle.Linear), { Position = self:pos(cell) }):Play()
+		end
 	end
 	release(self.cargoItems)
 end

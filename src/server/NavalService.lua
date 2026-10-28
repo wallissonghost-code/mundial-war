@@ -67,7 +67,7 @@ end
 
 -- Breadth-first search over water from the target shore back to any of the nation's ports.
 -- Returns the water path ordered port -> target, or nil.
-function NavalService.route(nid, targetCell)
+function NavalService.route(nid, targetCell, limit)
 	local ports = ctx.Buildings.ofKind(nid, "port")
 	if #ports == 0 then return nil, "Construa um porto no litoral primeiro." end
 	vstamp = vstamp + 1
@@ -90,6 +90,7 @@ function NavalService.route(nid, targetCell)
 	end
 	local scratch = {}
 	while head <= #queue do
+		if limit and head > limit then break end
 		local i = queue[head]
 		head = head + 1
 		if goal[i] then
@@ -113,7 +114,7 @@ function NavalService.route(nid, targetCell)
 	return nil, "Nenhuma rota marítima a partir dos seus portos."
 end
 
-function NavalService.launch(nid, cell, percent)
+function NavalService.launch(nid, cell, percent, searchLimit)
 	local N = Config.Naval
 	local n = ctx.Nations.get(nid)
 	if not ctx.Match.isPlaying() then return false, "Aguarde o início da partida." end
@@ -134,7 +135,7 @@ function NavalService.launch(nid, cell, percent)
 	local troops = math.floor(n.troops * percent)
 	if troops < N.MinTroops then return false, "A frota precisa de pelo menos " .. N.MinTroops .. " tropas." end
 	if n.gold < N.TransportGold then return false, "Transporte custa " .. N.TransportGold .. " de ouro." end
-	local path, why = NavalService.route(nid, cell)
+	local path, why = NavalService.route(nid, cell, searchLimit)
 	if not path then return false, why end
 	n.gold = n.gold - N.TransportGold
 	n.troops = n.troops - troops
@@ -304,70 +305,83 @@ local function moveBoat(b, dt)
 end
 
 -- Boats fight enemy boats, wear down enemy transports and raid gold from enemy ports in reach.
+-- Boats fight enemy boats (every tick) and, once per second, wear down transports, raid
+-- enemy ports and take fire from anti-naval batteries. The slow checks run on a 1 s pulse
+-- against short lists (ports, batteries) instead of a spatial query per boat per tick.
+local slowPulse = 0
 local function boatCombat(dt)
 	local N = Config.Naval
+	local Diplomacy = ctx.Diplomacy
 	for _, b in ipairs(boats) do
 		local range = boatRange(b)
 		local r2 = range * range
 		local target, best = nil, math.huge
 		for _, o in ipairs(boats) do
-			if o.nation ~= b.nation and o.hp > 0 and ctx.Diplomacy.relation(b.nation, o.nation) == "war" then
+			if o.nation ~= b.nation and o.hp > 0 then
 				local d = (o.x - b.x) ^ 2 + (o.y - b.y) ^ 2
-				if d <= r2 and d < best then target, best = o, d end
+				if d <= r2 and d < best and Diplomacy.relation(b.nation, o.nation) == "war" then target, best = o, d end
 			end
 		end
 		if target then target.hp = target.hp - boatDamage(b) * dt end
-		for _, f in ipairs(fleets) do
-			if not f.air and f.nation ~= b.nation and ctx.Diplomacy.relation(b.nation, f.nation) == "war" then
-				local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
-				if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r2 then
-					f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
+	end
+	slowPulse = slowPulse + dt
+	if slowPulse >= 1 and #boats + #fleets > 0 then
+		local step = slowPulse
+		slowPulse = 0
+		local ports, batteries = {}, {}
+		for _, bld in pairs(ctx.Buildings.all()) do
+			if bld.active then
+				if bld.kind == "port" then
+					local x, y = Map:xy(bld.cell)
+					ports[#ports + 1] = { owner = bld.owner, x = x + 0.5, y = y + 0.5 }
+				elseif bld.kind == "antinaval" then
+					local x, y = Map:xy(bld.cell)
+					local r = ctx.Buildings.stat(bld, "radius")
+					batteries[#batteries + 1] = { owner = bld.owner, x = x + 0.5, y = y + 0.5, r2 = r * r, damage = ctx.Buildings.stat(bld, "damage") }
 				end
 			end
 		end
-		local here = boatCell(b)
-		if here then
+		for _, b in ipairs(boats) do
+			local range = boatRange(b)
+			local r2 = range * range
+			for _, f in ipairs(fleets) do
+				if not f.air and f.nation ~= b.nation then
+					local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
+					if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r2 and Diplomacy.relation(b.nation, f.nation) == "war" then
+						f.troops = f.troops * (1 - N.BoatTransportDamage * step)
+					end
+				end
+			end
 			local owner = ctx.Nations.get(b.nation)
-			ctx.Buildings.near(here, range, function(p)
-				if p.kind == "port" and p.owner ~= b.nation and ctx.Diplomacy.relation(b.nation, p.owner) == "war" then
+			for _, p in ipairs(ports) do
+				if p.owner ~= b.nation and (p.x - b.x) ^ 2 + (p.y - b.y) ^ 2 <= r2 and Diplomacy.relation(b.nation, p.owner) == "war" then
 					local victim = ctx.Nations.get(p.owner)
 					if victim and owner then
-						local take = math.min(victim.gold, N.BoatGoldSteal * dt)
+						local take = math.min(victim.gold, N.BoatGoldSteal * step)
 						victim.gold = victim.gold - take
 						owner.gold = owner.gold + take
 					end
 				end
-			end)
+			end
+			local dmg = 0
+			for _, a in ipairs(batteries) do
+				if a.owner ~= b.nation and (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 <= a.r2 and Diplomacy.relation(a.owner, b.nation) == "war" then
+					if a.damage > dmg then dmg = a.damage end
+				end
+			end
+			if dmg > 0 then b.hp = b.hp - dmg * step end
 		end
-	end
-	-- coastal anti-naval batteries (Conquista Extrema)
-	if ctx.mode == "extreme" then
-		for _, b in ipairs(boats) do
-			local here = boatCell(b)
-			if here then
-				local dmg = nil
-				ctx.Buildings.near(here, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
-					if p.kind == "antinaval" and p.active and p.owner ~= b.nation and ctx.Diplomacy.relation(p.owner, b.nation) == "war" then
-						local r = ctx.Buildings.stat(p, "radius")
-						local px, py = Map:xy(p.cell)
-						if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r * r then
-							dmg = math.max(dmg or 0, ctx.Buildings.stat(p, "damage"))
+		if #batteries > 0 then
+			for _, f in ipairs(fleets) do
+				if not f.air then
+					local px, py = Map:xy(f.path[math.min(#f.path, math.floor(f.progress))])
+					for _, a in ipairs(batteries) do
+						if a.owner ~= f.nation and (a.x - px - 0.5) ^ 2 + (a.y - py - 0.5) ^ 2 <= a.r2 and Diplomacy.relation(a.owner, f.nation) == "war" then
+							f.troops = f.troops * (1 - N.BoatTransportDamage * step)
+							break
 						end
 					end
-				end)
-				if dmg then b.hp = b.hp - dmg * dt end
-			end
-		end
-		for _, f in ipairs(fleets) do
-			if not f.air then
-				local pos = f.path[math.min(#f.path, math.floor(f.progress))]
-				ctx.Buildings.near(pos, ctx.Stats.maxStat(Config, "antinaval", "radius"), function(p)
-					if p.kind == "antinaval" and p.active and p.owner ~= f.nation and ctx.Diplomacy.relation(p.owner, f.nation) == "war"
-						and Map:distance(p.cell, pos) <= ctx.Buildings.stat(p, "radius") then
-						f.troops = f.troops * (1 - N.BoatTransportDamage * dt)
-						return true
-					end
-				end)
+				end
 			end
 		end
 	end
@@ -423,6 +437,8 @@ local function tradeRoute(portCell)
 	return path
 end
 
+local capturePulse = 0
+local NO_BOATS = {}
 local function cargoTick(dt)
 	local N = Config.Naval
 	cargoClock = cargoClock + dt
@@ -449,6 +465,9 @@ local function cargoTick(dt)
 		end
 	end
 	local k = 1
+	capturePulse = capturePulse + dt
+	local checkCaptures = capturePulse >= 0.5 and #boats > 0
+	if capturePulse >= 0.5 then capturePulse = 0 end
 	for i = 1, #cargos do
 		local c = cargos[i]
 		local keep = ctx.Nations.alive(c.nation)
@@ -456,8 +475,8 @@ local function cargoTick(dt)
 			c.progress = c.progress + N.CargoSpeed * dt
 			local pos = c.path[math.min(#c.path, math.floor(c.progress))]
 			local px, py = Map:xy(pos)
-			-- an enemy defence boat in reach captures the cargo
-			for _, b in ipairs(boats) do
+			-- an enemy defence boat in reach captures the cargo (checked twice a second)
+			for _, b in ipairs(checkCaptures and boats or NO_BOATS) do
 				if b.nation ~= c.nation and ctx.Diplomacy.relation(b.nation, c.nation) == "war" then
 					local r = boatRange(b)
 					if (px + 0.5 - b.x) ^ 2 + (py + 0.5 - b.y) ^ 2 <= r * r then

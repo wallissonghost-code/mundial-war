@@ -5,6 +5,7 @@ local DiplomacyService = {}
 
 local ctx
 local relations = {}      -- "a:b" -> { kind = "ally" | "war", since }
+local matrix = {}         -- a -> b -> kind (fast lookups for the simulation's hot loops)
 local requests = {}       -- to -> { from -> expires }
 local brokeAt = {}        -- "a:b" -> time alliance was cancelled
 
@@ -18,13 +19,22 @@ function DiplomacyService.init(context)
 end
 
 function DiplomacyService.reset()
-	relations, requests, brokeAt = {}, {}, {}
+	relations, requests, brokeAt, matrix = {}, {}, {}, {}
+end
+
+local function setRelation(a, b, value)
+	relations[key(a, b)] = value
+	local kind = value and value.kind or nil
+	matrix[a] = matrix[a] or {}
+	matrix[b] = matrix[b] or {}
+	matrix[a][b] = kind
+	matrix[b][a] = kind
 end
 
 function DiplomacyService.relation(a, b)
 	if a == b then return "self" end
-	local r = relations[key(a, b)]
-	return r and r.kind or "neutral"
+	local row = matrix[a]
+	return row and row[b] or "neutral"
 end
 
 function DiplomacyService.allied(a, b)
@@ -50,7 +60,7 @@ function DiplomacyService.declareWar(a, b)
 	local r = relations[key(a, b)]
 	if r and r.kind == "war" then return true, "Vocês já estão em guerra." end
 	if r and r.kind == "ally" then brokeAt[key(a, b)] = ctx.now() end
-	relations[key(a, b)] = { kind = "war", since = ctx.now() }
+	setRelation(a, b, { kind = "war", since = ctx.now() })
 	if requests[a] then requests[a][b] = nil end
 	if requests[b] then requests[b][a] = nil end
 	notifyPair(a, b)
@@ -66,7 +76,7 @@ function DiplomacyService.ensureWar(a, b)
 end
 
 local function makeAlliance(a, b)
-	relations[key(a, b)] = { kind = "ally", since = ctx.now() }
+	setRelation(a, b, { kind = "ally", since = ctx.now() })
 	if requests[a] then requests[a][b] = nil end
 	if requests[b] then requests[b][a] = nil end
 	-- allies stop fighting each other immediately; troops in the field go home
@@ -117,7 +127,7 @@ end
 
 function DiplomacyService.breakAlliance(a, b)
 	if not DiplomacyService.allied(a, b) then return false, "Vocês não são aliados." end
-	relations[key(a, b)] = nil
+	setRelation(a, b, nil)
 	brokeAt[key(a, b)] = ctx.now()
 	notifyPair(a, b)
 	ctx.notify(b, (ctx.Nations.get(a) or { name = "?" }).name .. " cancelou a aliança.", "war")
@@ -127,7 +137,8 @@ end
 function DiplomacyService.removeNation(id)
 	for k in pairs(relations) do
 		local a, b = string.match(k, "^(%d+):(%d+)$")
-		if tonumber(a) == id or tonumber(b) == id then relations[k] = nil end
+		a, b = tonumber(a), tonumber(b)
+		if a == id or b == id then setRelation(a, b, nil) end
 	end
 	requests[id] = nil
 	for _, list in pairs(requests) do list[id] = nil end

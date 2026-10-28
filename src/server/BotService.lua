@@ -248,11 +248,12 @@ local function tryNaval(n, b)
 		local o = Territory.ownerOf(i)
 		if o ~= n.id and (o == 0 or (ctx.Diplomacy.canAttack(n.id, o) and ctx.Nations.get(o).troops < n.troops * 0.5)) then
 			local d = Map:distance(i, ports[1].cell)
-			if d < bestD then best, bestD = i, d end
+			-- nearby shores only: a short search, and a realistic invasion
+			if d < bestD and d < 120 then best, bestD = i, d end
 		end
 	end
 	if best then
-		local ok = ctx.Naval.launch(n.id, best, n.kind == "tribe" and 0.3 or 0.4)
+		local ok = ctx.Naval.launch(n.id, best, n.kind == "tribe" and 0.3 or 0.4, Config.Bots.NavalSearchLimit)
 		return ok
 	end
 	return false
@@ -268,7 +269,10 @@ local function think(b)
 	local attackedBy = #attacked > 0 and attacked[1].nation or nil
 
 	-- building happens alongside any other state
-	if n.gold > 0 and tryBuild(n, b, attackedBy) then b.state = S.Building end
+	if ctx.now() >= (b.nextBuild or 0) then
+		b.nextBuild = ctx.now() + B.BuildInterval
+		if n.gold > 0 and tryBuild(n, b, attackedBy) then b.state = S.Building end
+	end
 
 	if attackedBy and n.troops < (ctx.Nations.get(attackedBy) or n).troops then
 		b.state = S.Defending

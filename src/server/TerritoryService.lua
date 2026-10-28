@@ -11,6 +11,9 @@ local recentClaims = {}       -- nid -> list of recently claimed cells (enclave 
 local seen, stamp = {}, 0     -- reusable visit marks
 local compMark, compStamp = {}, 0 -- component id per owned cell (0 = not analysed yet)
 local nb, nbOuter = {}, {}
+local borderChunks = {}       -- nid -> chunk key -> { cell = true } (spatial index of border cells)
+local dirty = {}              -- nid -> true when its territory changed since the last analysis
+local CHUNK = 16
 
 TerritoryService.owner = owner
 
@@ -27,7 +30,7 @@ function TerritoryService.reset()
 		seen[i] = 0
 	end
 	stamp, compStamp = 0, 0
-	ownedBy, border, recentClaims = {}, {}, {}
+	ownedBy, border, recentClaims, borderChunks, dirty = {}, {}, {}, {}, {}
 	changes, changeCount = {}, 0
 end
 
@@ -35,10 +38,35 @@ function TerritoryService.register(nid)
 	ownedBy[nid] = {}
 	border[nid] = {}
 	recentClaims[nid] = {}
+	borderChunks[nid] = {}
+	dirty[nid] = true
 end
 
 function TerritoryService.unregister(nid)
-	ownedBy[nid], border[nid], recentClaims[nid] = nil, nil, nil
+	ownedBy[nid], border[nid], recentClaims[nid], borderChunks[nid], dirty[nid] = nil, nil, nil, nil, nil
+end
+
+local function chunkOf(i)
+	local x = (i - 1) % Map.W
+	local y = (i - 1 - x) / Map.W
+	return math.floor(x / CHUNK) * 1000 + math.floor(y / CHUNK)
+end
+
+local function setBorder(id, i, on)
+	local set = border[id]
+	if not set or (set[i] == true) == on then return end
+	local chunks = borderChunks[id]
+	local key = chunkOf(i)
+	if on then
+		set[i] = true
+		local c = chunks[key]
+		if not c then c = {} chunks[key] = c end
+		c[i] = true
+	else
+		set[i] = nil
+		local c = chunks[key]
+		if c then c[i] = nil end
+	end
 end
 
 function TerritoryService.ownerOf(i)
@@ -56,17 +84,16 @@ end
 local function refreshBorder(i)
 	local id = owner[i]
 	if id <= 0 then return end
-	local set = border[id]
-	if not set then return end
+	if not border[id] then return end
 	local n = Map:neighbors(i, nb)
 	for k = 1, n do
 		local o = owner[nb[k]]
 		if o ~= -1 and o ~= id then
-			set[i] = true
+			setBorder(id, i, true)
 			return
 		end
 	end
-	set[i] = nil
+	setBorder(id, i, false)
 end
 
 -- The single place where ownership changes. Water is rejected here, so no code path
@@ -80,7 +107,8 @@ function TerritoryService.setOwner(i, nid)
 	if old > 0 then
 		local set = ownedBy[old]
 		if set then set[i] = nil end
-		if border[old] then border[old][i] = nil end
+		setBorder(old, i, false)
+		dirty[old] = true
 		local n = nations.get(old)
 		if n then
 			n.land = n.land - 1
@@ -90,6 +118,7 @@ function TerritoryService.setOwner(i, nid)
 	owner[i] = nid
 	if nid > 0 then
 		ownedBy[nid][i] = true
+		dirty[nid] = true
 		local n = nations.get(nid)
 		n.land = n.land + 1
 		local recent = recentClaims[nid]
@@ -123,6 +152,44 @@ function TerritoryService.frontier(nid, target, out)
 				seen[j] = stamp
 				count = count + 1
 				out[count] = j
+			end
+		end
+	end
+	for k = count + 1, #out do out[k] = nil end
+	return out, count
+end
+
+-- Same as frontier, but only from border cells within `radius` of `center` (chunk index).
+-- Expansion uses it so a huge empire does not rescan its whole border every tick.
+function TerritoryService.frontierNear(nid, target, center, radius, out)
+	out = out or {}
+	local count = 0
+	stamp = stamp + 1
+	local chunks = borderChunks[nid]
+	if not chunks then return out, 0 end
+	local W = Map.W
+	local cx = (center - 1) % W
+	local cy = (center - 1 - cx) / W
+	local r2 = radius * radius
+	for kx = math.floor((cx - radius) / CHUNK), math.floor((cx + radius) / CHUNK) do
+		for ky = math.floor((cy - radius) / CHUNK), math.floor((cy + radius) / CHUNK) do
+			local set = chunks[kx * 1000 + ky]
+			if set then
+				for i in pairs(set) do
+					local x = (i - 1) % W
+					local y = (i - 1 - x) / W
+					if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r2 then
+						local n = Map:neighbors(i, nb)
+						for k = 1, n do
+							local j = nb[k]
+							if owner[j] == target and seen[j] ~= stamp then
+								seen[j] = stamp
+								count = count + 1
+								out[count] = j
+							end
+						end
+					end
+				end
 			end
 		end
 	end
@@ -253,6 +320,9 @@ function TerritoryService.analyze(nid)
 	local n = ctx.Nations.get(nid)
 	local set = ownedBy[nid]
 	if not n or not set then return end
+	-- unchanged territory keeps its label and exclave map
+	if not dirty[nid] and not n.capitalLost then return end
+	dirty[nid] = nil
 	local W = Map.W
 	local bestSize, bestCell, capComp = 0, nil, nil
 	local largestComp = nil

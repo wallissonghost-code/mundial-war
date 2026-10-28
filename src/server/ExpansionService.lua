@@ -200,7 +200,13 @@ local function advance(o, dt)
 	end
 	if o.troops < E.MinTroopsToSend * 0.5 then finish(o, true) return end
 
-	local _, count = Territory.frontier(o.nation, o.target, candidates)
+	-- look only near the fan first; fall back to the whole border when that area is used up
+	local sqTroops = math.sqrt(math.max(0, o.troops))
+	local reach = Map:distance(o.originCell, o.anchor) + E.FrontSearchMargin + sqTroops / 4
+	local _, count = Territory.frontierNear(o.nation, o.target, o.originCell, reach, candidates)
+	if count == 0 then
+		_, count = Territory.frontier(o.nation, o.target, candidates)
+	end
 	if count == 0 then finish(o, true) return end
 
 	-- Fan-shaped front: grow outward from where the order left our border (origin), inside a
